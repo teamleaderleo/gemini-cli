@@ -1,6 +1,6 @@
 /**
  * @license
- * Copyright 2025 Google LLC
+ * Copyright 2026 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
 
@@ -55,8 +55,8 @@ const config = {
   sandboxManager: undefined,
 } as unknown as Config;
 
-describe('DiscoveredTool abort ownership', () => {
-  it('terminates the spawned process tree when execution is aborted', async () => {
+describe('DiscoveredTool abort handoff', () => {
+  it('requests process-tree termination for the spawned child after abort', async () => {
     const child = new ControlledChildProcess();
     vi.mocked(spawn).mockReturnValue(
       child as unknown as ReturnType<typeof spawn>,
