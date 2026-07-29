@@ -89,7 +89,7 @@ describe('DiscoveredTool abort ownership', () => {
       });
     } finally {
       child.emit('close', null, 'SIGTERM');
-      await execution;
+      await execution.catch(() => undefined);
     }
   });
 });
