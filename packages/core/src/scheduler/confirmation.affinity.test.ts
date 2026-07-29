@@ -25,7 +25,7 @@ import {
   type WaitingToolCall,
 } from './types.js';
 
-describe('confirmation modification call affinity', () => {
+describe('inline confirmation modification call affinity', () => {
   it('passes the correlated call to inline modification when approvals overlap', async () => {
     const messageBus = new EventEmitter() as unknown as MessageBus;
     messageBus.publish = vi.fn().mockResolvedValue(undefined);
