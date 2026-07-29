@@ -87,9 +87,8 @@ describe('confirmation waiting state cleanup', () => {
     controller.abort();
 
     await expect(resolution).rejects.toThrow('Operation cancelled');
-    expect(onWaitingForConfirmation.mock.calls.map(([waiting]) => waiting)).toEqual([
-      true,
-      false,
-    ]);
+    expect(
+      onWaitingForConfirmation.mock.calls.map(([waiting]) => waiting),
+    ).toEqual([true, false]);
   });
 });
