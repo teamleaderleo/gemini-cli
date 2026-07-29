@@ -39,15 +39,20 @@ describe('ExecutionLifecycleService asynchronous kill ownership', () => {
     ExecutionLifecycleService.kill(executionId);
     await Promise.resolve();
 
-    expect(terminate).toHaveBeenCalledTimes(1);
-    expect(operatingSystemProcessAlive).toBe(true);
-    expect(ExecutionLifecycleService.isActive(executionId)).toBe(true);
-    expect(resultSettled).toBe(false);
+    try {
+      expect(terminate).toHaveBeenCalledTimes(1);
+      expect(operatingSystemProcessAlive).toBe(true);
+      expect(ExecutionLifecycleService.isActive(executionId)).toBe(true);
+      expect(resultSettled).toBe(false);
+    } finally {
+      releaseTermination?.();
+    }
 
-    releaseTermination?.();
     const result = await handle.result;
+    await vi.waitFor(() => {
+      expect(operatingSystemProcessAlive).toBe(false);
+    });
 
-    expect(operatingSystemProcessAlive).toBe(false);
     expect(ExecutionLifecycleService.isActive(executionId)).toBe(false);
     expect(result.aborted).toBe(true);
     expect(result.exitCode).toBe(130);
