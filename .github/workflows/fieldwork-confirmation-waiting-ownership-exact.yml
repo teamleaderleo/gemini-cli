@@ -81,6 +81,94 @@ jobs:
           compile(script, '<waiting-ownership-patch>', 'exec')
           exec(script, {'__name__': '__main__'})
 
+          tests = Path(
+              'packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts'
+          )
+          test_text = tests.read_text(encoding='utf-8')
+          old_ide_test = """\
+              it('clears waiting state when IDE confirmation rejects', async () => {
+                let rejectIde!: (error: Error) => void;
+                const ideConfirmation = new Promise<never>((_resolve, reject) => {
+                  rejectIde = reject;
+                });
+                const harness = createHarness({
+                  type: 'info',
+                  title: 'Approval',
+                  prompt: 'Approve?',
+                  onConfirm: vi.fn(),
+                  ideConfirmation,
+                });
+                const onWaiting = vi.fn();
+                const resolution = resolve(
+                  harness,
+                  new AbortController().signal,
+                  onWaiting,
+                );
+                await waitForBus(harness);
+                rejectIde(new Error('IDE confirmation failed'));
+
+                await expect(resolution).rejects.toThrow('IDE confirmation failed');
+                expect(onWaiting.mock.calls.map(([waiting]) => waiting)).toEqual([
+                  true,
+                  false,
+                ]);
+              });
+          """
+          new_ide_test = """\
+              it('keeps waiting on the bus after IDE confirmation rejects', async () => {
+                const warn = vi.spyOn(debugLogger, 'warn').mockImplementation(() => {});
+                let rejectIde!: (error: Error) => void;
+                const ideConfirmation = new Promise<never>((_resolve, reject) => {
+                  rejectIde = reject;
+                });
+                const harness = createHarness({
+                  type: 'info',
+                  title: 'Approval',
+                  prompt: 'Approve?',
+                  onConfirm: vi.fn(),
+                  ideConfirmation,
+                });
+                const onWaiting = vi.fn();
+                const resolution = resolve(
+                  harness,
+                  new AbortController().signal,
+                  onWaiting,
+                );
+                await waitForBus(harness);
+                rejectIde(new Error('IDE confirmation failed'));
+
+                await vi.waitFor(() => {
+                  expect(warn).toHaveBeenCalledWith(
+                    'Error waiting for confirmation via IDE',
+                    expect.objectContaining({ message: 'IDE confirmation failed' }),
+                  );
+                });
+                expect(onWaiting.mock.calls.map(([waiting]) => waiting)).toEqual([
+                  true,
+                ]);
+
+                harness.messageBus.emit(MessageBusType.TOOL_CONFIRMATION_RESPONSE, {
+                  type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+                  correlationId: confirmationCorrelationId(harness),
+                  outcome: ToolConfirmationOutcome.Cancel,
+                });
+
+                await expect(resolution).resolves.toMatchObject({
+                  outcome: ToolConfirmationOutcome.Cancel,
+                });
+                expect(onWaiting.mock.calls.map(([waiting]) => waiting)).toEqual([
+                  true,
+                  false,
+                ]);
+              });
+          """
+          if test_text.count(old_ide_test) != 1:
+              raise SystemExit('IDE fallback test shape changed')
+          tests.write_text(
+              test_text.replace(old_ide_test, new_ide_test, 1),
+              encoding='utf-8',
+          )
+
       - name: Use Node.js 22
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
