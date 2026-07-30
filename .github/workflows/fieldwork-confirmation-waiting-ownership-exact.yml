@@ -1,0 +1,97 @@
+name: Fieldwork confirmation waiting ownership exact head
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fieldwork-confirmation-waiting-ownership-exact.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-confirmation-waiting-ownership-exact
+  cancel-in-progress: true
+
+jobs:
+  staged-repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact owned branch
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: fieldwork/confirmation-waiting-state-repair
+          persist-credentials: false
+
+      - name: Apply the reviewed staged repair
+        shell: python
+        run: |
+          from pathlib import Path
+
+          workflow = Path(
+              '.github/workflows/fieldwork-confirmation-waiting-ownership.yml'
+          ).read_text(encoding='utf-8').splitlines()
+          step = workflow.index(
+              '      - name: Apply waiting ownership repair and controls'
+          )
+          run_line = next(
+              index
+              for index in range(step + 1, len(workflow))
+              if workflow[index].strip() == 'run: |'
+          )
+          end = next(
+              index
+              for index in range(run_line + 1, len(workflow))
+              if workflow[index].startswith('      - name: Use Node.js 22')
+          )
+          script_lines = []
+          for line in workflow[run_line + 1 : end]:
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              elif line.strip():
+                  raise SystemExit(f'unexpected patch-script indentation: {line!r}')
+              else:
+                  script_lines.append('')
+          script = '\n'.join(script_lines) + '\n'
+          compile(script, '<waiting-ownership-patch>', 'exec')
+          exec(script, {'__name__': '__main__'})
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Run staged repair and adjacent controls
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.waiting-state.test.ts \
+            src/scheduler/confirmation.waiting-state.repair.test.ts \
+            src/scheduler/confirmation-wait-tracker.test.ts \
+            src/scheduler/confirmation.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.ts \
+            packages/core/src/scheduler/confirmation-wait-tracker.ts \
+            packages/core/src/scheduler/confirmation-wait-tracker.test.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.test.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts
+          git diff --check
+
+      - name: Record exact staged receipt
+        run: |
+          test "$(git rev-parse HEAD)" = "1600b6f28e7e7156f9e6c3b66ea84bb2ba1a11f3" || {
+            echo "unexpected branch head: $(git rev-parse HEAD)"
+            exit 1
+          }
+          printf '%s\n' \
+            "head=$(git rev-parse HEAD)" \
+            "node=$(node --version)" \
+            "npm=$(npm --version)"
+          git diff --stat
