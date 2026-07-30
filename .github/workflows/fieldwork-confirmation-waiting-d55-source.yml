@@ -16,6 +16,7 @@ concurrency:
 
 env:
   UPSTREAM_HEAD: d55e366f6ab393e024c613d940fead3696d56eac
+  UPSTREAM_BRANCH: fieldwork/upstream-d55-waiting-ownership-base
   STAGED_BRANCH: fieldwork/confirmation-waiting-state-repair
   SOURCE_BRANCH: fieldwork/confirmation-waiting-d55-source
 
@@ -35,7 +36,9 @@ jobs:
         run: |
           set -euo pipefail
           git fetch --no-tags --depth=1 origin \
+            "refs/heads/$UPSTREAM_BRANCH:refs/remotes/origin/$UPSTREAM_BRANCH" \
             "refs/heads/$STAGED_BRANCH:refs/remotes/origin/$STAGED_BRANCH"
+          test "$(git rev-parse "origin/$UPSTREAM_BRANCH")" = "$UPSTREAM_HEAD"
           git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership-exact.yml" > /tmp/exact.yml
           python3 <<'PY'
           from pathlib import Path
