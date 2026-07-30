@@ -40,6 +40,7 @@ jobs:
             "refs/heads/$STAGED_BRANCH:refs/remotes/origin/$STAGED_BRANCH"
           test "$(git rev-parse "origin/$UPSTREAM_BRANCH")" = "$UPSTREAM_HEAD"
           git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership-exact.yml" > /tmp/exact.yml
+          git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership.yml" > /tmp/ownership.yml
           python3 <<'PY'
           from pathlib import Path
 
@@ -69,12 +70,15 @@ jobs:
           PY
           git checkout --detach "$UPSTREAM_HEAD"
           test "$(git rev-parse HEAD)" = "$UPSTREAM_HEAD"
+          cp /tmp/ownership.yml \
+            .github/workflows/fieldwork-confirmation-waiting-ownership.yml
 
       - name: Apply repair and fixture typing
         shell: bash
         run: |
           set -euo pipefail
           python3 /tmp/staged-repair.py
+          rm .github/workflows/fieldwork-confirmation-waiting-ownership.yml
           python3 <<'PY'
           from pathlib import Path
 
