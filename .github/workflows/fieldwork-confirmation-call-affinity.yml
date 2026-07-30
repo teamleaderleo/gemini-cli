@@ -1,0 +1,32 @@
+name: fieldwork-confirmation-call-affinity
+
+on:
+  push:
+    branches:
+      - fieldwork/confirmation-call-affinity
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-confirmation-call-affinity
+  cancel-in-progress: true
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact branch head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Execute call-affinity regression
+        run: npm run test --workspace @google/gemini-cli-core -- src/scheduler/confirmation.affinity.test.ts
+      - name: Typecheck core workspace
+        run: npm run typecheck --workspace @google/gemini-cli-core
