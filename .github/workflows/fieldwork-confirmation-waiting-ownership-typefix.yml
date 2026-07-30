@@ -94,14 +94,15 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
 
-      - name: Run typed staged repair and adjacent controls
+      - name: Format staged source and tests
         run: |
-          npm run test --workspace @google/gemini-cli-core -- \
-            src/scheduler/confirmation.waiting-state.test.ts \
-            src/scheduler/confirmation.waiting-state.repair.test.ts \
-            src/scheduler/confirmation-wait-tracker.test.ts \
-            src/scheduler/confirmation.test.ts
-          npm run typecheck --workspace @google/gemini-cli-core
+          npx prettier --write \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.ts \
+            packages/core/src/scheduler/confirmation-wait-tracker.ts \
+            packages/core/src/scheduler/confirmation-wait-tracker.test.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.test.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts
           npx prettier --check \
             packages/core/src/scheduler/confirmation.ts \
             packages/core/src/scheduler/scheduler.ts \
@@ -110,6 +111,15 @@ jobs:
             packages/core/src/scheduler/confirmation.waiting-state.test.ts \
             packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts
           git diff --check
+
+      - name: Run typed staged repair and adjacent controls
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.waiting-state.test.ts \
+            src/scheduler/confirmation.waiting-state.repair.test.ts \
+            src/scheduler/confirmation-wait-tracker.test.ts \
+            src/scheduler/confirmation.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
 
       - name: Record exact typed receipt
         env:
