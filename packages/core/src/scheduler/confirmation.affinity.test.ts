@@ -79,42 +79,46 @@ describe('inline confirmation modification call affinity', () => {
 
     let currentTargetCall: ValidatingToolCall | WaitingToolCall =
       targetValidatingCall;
-    const state = {
-      getToolCall: vi.fn((callId: string) => {
-        if (callId === targetValidatingCall.request.callId) {
-          return currentTargetCall;
-        }
-        if (callId === otherWaitingCall.request.callId) {
-          return otherWaitingCall;
-        }
-        return undefined;
-      }),
-      updateStatus: vi.fn(
-        (
-          callId: string,
-          status: CoreToolCallStatus,
-          data?: {
-            confirmationDetails?: WaitingToolCall['confirmationDetails'];
-            correlationId?: string;
-          },
-        ) => {
-          if (
-            callId === targetValidatingCall.request.callId &&
-            status === CoreToolCallStatus.AwaitingApproval
-          ) {
-            currentTargetCall = {
-              ...targetValidatingCall,
-              status: CoreToolCallStatus.AwaitingApproval,
-              confirmationDetails: data?.confirmationDetails ?? {
-                type: 'info',
-                title: 'Target approval',
-                prompt: 'Approve target?',
-              },
-              correlationId: data?.correlationId,
-            };
-          }
+    let targetCorrelationId: string | undefined;
+    const getToolCall = vi.fn((callId: string) => {
+      if (callId === targetValidatingCall.request.callId) {
+        return currentTargetCall;
+      }
+      if (callId === otherWaitingCall.request.callId) {
+        return otherWaitingCall;
+      }
+      return undefined;
+    });
+    const updateStatus = vi.fn(
+      (
+        callId: string,
+        status: CoreToolCallStatus,
+        data?: {
+          confirmationDetails?: WaitingToolCall['confirmationDetails'];
+          correlationId?: string;
         },
-      ),
+      ) => {
+        if (
+          callId === targetValidatingCall.request.callId &&
+          status === CoreToolCallStatus.AwaitingApproval
+        ) {
+          targetCorrelationId = data?.correlationId;
+          currentTargetCall = {
+            ...targetValidatingCall,
+            status: CoreToolCallStatus.AwaitingApproval,
+            confirmationDetails: data?.confirmationDetails ?? {
+              type: 'info',
+              title: 'Target approval',
+              prompt: 'Approve target?',
+            },
+            correlationId: targetCorrelationId,
+          };
+        }
+      },
+    );
+    const state = {
+      getToolCall,
+      updateStatus,
       updateArgs: vi.fn(),
       firstActiveCall: otherWaitingCall,
     } as unknown as Mocked<SchedulerStateManager>;
@@ -144,29 +148,20 @@ describe('inline confirmation modification call affinity', () => {
       expect(
         messageBus.listenerCount(MessageBusType.TOOL_CONFIRMATION_RESPONSE),
       ).toBeGreaterThan(0);
+      expect(targetCorrelationId).toBeDefined();
     });
-
-    const statusCall = state.updateStatus.mock.calls.find(
-      ([callId, status]) =>
-        callId === 'call-b' && status === CoreToolCallStatus.AwaitingApproval,
-    );
-    expect(statusCall).toBeDefined();
-    const correlationId = (
-      statusCall?.[2] as { correlationId?: string } | undefined
-    )?.correlationId;
-    expect(correlationId).toBeDefined();
 
     messageBus.emit(MessageBusType.TOOL_CONFIRMATION_RESPONSE, {
       type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
-      correlationId,
+      correlationId: targetCorrelationId,
       outcome: ToolConfirmationOutcome.ProceedOnce,
       payload,
     });
 
     await resolution;
 
-    expect(state.getToolCall).toHaveBeenCalledWith('call-b');
-    expect(state.getToolCall).not.toHaveBeenCalledWith('call-a');
+    expect(getToolCall).toHaveBeenCalledWith('call-b');
+    expect(getToolCall).not.toHaveBeenCalledWith('call-a');
     expect(modifier.applyInlineModify).toHaveBeenCalledTimes(1);
     const modifiedCall = modifier.applyInlineModify.mock.calls[0]?.[0];
     expect(modifiedCall?.request.callId).toBe('call-b');
