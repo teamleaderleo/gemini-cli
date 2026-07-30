@@ -19,10 +19,10 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-      - name: Check out exact owned branch
+      - name: Check out exact pull-request head
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: fieldwork/confirmation-waiting-state-repair
+          ref: ${{ github.event.pull_request.head.sha }}
           persist-credentials: false
 
       - name: Apply the reviewed staged repair
@@ -85,9 +85,11 @@ jobs:
           git diff --check
 
       - name: Record exact staged receipt
+        env:
+          EXPECTED_HEAD: ${{ github.event.pull_request.head.sha }}
         run: |
-          test "$(git rev-parse HEAD)" = "1600b6f28e7e7156f9e6c3b66ea84bb2ba1a11f3" || {
-            echo "unexpected branch head: $(git rev-parse HEAD)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_HEAD" || {
+            echo "unexpected branch head: $(git rev-parse HEAD); expected $EXPECTED_HEAD"
             exit 1
           }
           printf '%s\n' \
