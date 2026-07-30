@@ -33,6 +33,23 @@ jobs:
       - name: Install locked dependencies
         run: npm ci
       - name: Execute call-affinity regression
+        id: regression
+        continue-on-error: true
         run: npm run test --workspace @google/gemini-cli-core -- src/scheduler/confirmation.affinity.test.ts
+      - name: Require correlated-call failure
+        env:
+          OUTCOME: ${{ steps.regression.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "Expected the source-confirmed call-affinity regression to fail; observed: $OUTCOME"
+            exit 1
+          fi
       - name: Typecheck core workspace
         run: npm run typecheck --workspace @google/gemini-cli-core
+      - name: Record exact receipt
+        run: |
+          printf '%s\n' \
+            "head=$(git rev-parse HEAD)" \
+            "node=$(node --version)" \
+            "npm=$(npm --version)" \
+            "regression_outcome=${{ steps.regression.outcome }}"
