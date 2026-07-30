@@ -55,6 +55,29 @@ jobs:
               else:
                   script_lines.append('')
           script = '\n'.join(script_lines) + '\n'
+
+          single_entry = """\
+          if text.count(pass_anchor) != 1:
+              raise SystemExit('scheduler callback anchor mismatch')
+          text = text.replace(
+              pass_anchor,
+              'onWaitingForConfirmation: this.confirmationWaitTracker.update',
+              1,
+          )
+          """
+          both_entries = """\
+          if text.count(pass_anchor) != 2:
+              raise SystemExit('scheduler callback anchor mismatch')
+          text = text.replace(
+              pass_anchor,
+              'onWaitingForConfirmation: this.confirmationWaitTracker.update',
+              2,
+          )
+          """
+          if script.count(single_entry) != 1:
+              raise SystemExit('embedded callback patch shape changed')
+          script = script.replace(single_entry, both_entries, 1)
+
           compile(script, '<waiting-ownership-patch>', 'exec')
           exec(script, {'__name__': '__main__'})
 
