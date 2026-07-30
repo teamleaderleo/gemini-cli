@@ -80,7 +80,15 @@ describe('inline confirmation modification call affinity', () => {
     let currentTargetCall: ValidatingToolCall | WaitingToolCall =
       targetValidatingCall;
     const state = {
-      getToolCall: vi.fn(() => currentTargetCall),
+      getToolCall: vi.fn((callId: string) => {
+        if (callId === targetValidatingCall.request.callId) {
+          return currentTargetCall;
+        }
+        if (callId === otherWaitingCall.request.callId) {
+          return otherWaitingCall;
+        }
+        return undefined;
+      }),
       updateStatus: vi.fn(
         (
           callId: string,
@@ -157,6 +165,8 @@ describe('inline confirmation modification call affinity', () => {
 
     await resolution;
 
+    expect(state.getToolCall).toHaveBeenCalledWith('call-b');
+    expect(state.getToolCall).not.toHaveBeenCalledWith('call-a');
     expect(modifier.applyInlineModify).toHaveBeenCalledTimes(1);
     const modifiedCall = modifier.applyInlineModify.mock.calls[0]?.[0];
     expect(modifiedCall?.request.callId).toBe('call-b');
