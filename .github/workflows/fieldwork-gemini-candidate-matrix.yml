@@ -24,16 +24,16 @@ jobs:
       matrix:
         include:
           - name: discovered-tool abort handoff
-            sha: 4c823c6232fed53363e7bd13ba8a7bf8c9fd0d78
+            sha: 30da6f7566d394150f9d62522e374c42c931c072
             test: src/tools/tool-registry.abort.test.ts
           - name: inline approval call affinity
-            sha: 7b4732dc42207409a91c2054ee8948facc6d06f6
+            sha: ab971e9a1e3e61602621064d12c1b92dca3569aa
             test: src/scheduler/confirmation.affinity.test.ts
           - name: approval waiting-state cleanup
-            sha: d457e26ed85127056e5e24c21d84b2d635671ad6
+            sha: 974f6e288bf3e86af0c06cb445b9626bd5d2280f
             test: src/scheduler/confirmation.waiting-state.test.ts
           - name: asynchronous kill ownership contract
-            sha: b09768c5acb2a85a4c7af0abd72433abc8f230ab
+            sha: e33c6715cd289f912574025580cd74e4da9fe5bc
             test: src/services/executionLifecycleService.async-kill.test.ts
 
     steps:
