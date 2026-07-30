@@ -1,0 +1,151 @@
+name: Fieldwork confirmation waiting ownership d55 source
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/upstream-d55-waiting-ownership-base
+    paths:
+      - .github/workflows/fieldwork-confirmation-waiting-d55-source.yml
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fieldwork-confirmation-waiting-d55-source
+  cancel-in-progress: true
+
+env:
+  UPSTREAM_HEAD: d55e366f6ab393e024c613d940fead3696d56eac
+  STAGED_BRANCH: fieldwork/confirmation-waiting-state-repair
+  SOURCE_BRANCH: fieldwork/confirmation-waiting-d55-source
+
+jobs:
+  publish-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact carrier head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Extract reviewed staged repair
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin \
+            "refs/heads/$STAGED_BRANCH:refs/remotes/origin/$STAGED_BRANCH"
+          git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership-exact.yml" > /tmp/exact.yml
+          python3 <<'PY'
+          from pathlib import Path
+
+          workflow = Path('/tmp/exact.yml').read_text(encoding='utf-8').splitlines()
+          step = workflow.index('      - name: Apply the reviewed staged repair')
+          run_line = next(
+              index
+              for index in range(step + 1, len(workflow))
+              if workflow[index].strip() == 'run: |'
+          )
+          end = next(
+              index
+              for index in range(run_line + 1, len(workflow))
+              if workflow[index].startswith('      - name: Use Node.js 22')
+          )
+          script_lines = []
+          for line in workflow[run_line + 1 : end]:
+              if line.startswith('          '):
+                  script_lines.append(line[10:])
+              elif line.strip():
+                  raise SystemExit(f'unexpected staged-script indentation: {line!r}')
+              else:
+                  script_lines.append('')
+          script = '\n'.join(script_lines) + '\n'
+          compile(script, '/tmp/staged-repair.py', 'exec')
+          Path('/tmp/staged-repair.py').write_text(script, encoding='utf-8')
+          PY
+          git checkout --detach "$UPSTREAM_HEAD"
+          test "$(git rev-parse HEAD)" = "$UPSTREAM_HEAD"
+
+      - name: Apply repair and fixture typing
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 /tmp/staged-repair.py
+          python3 <<'PY'
+          from pathlib import Path
+
+          tests = Path(
+              'packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts'
+          )
+          text = tests.read_text(encoding='utf-8')
+          old_signature = 'function createHarness(details: ToolCallConfirmationDetails) {'
+          new_signature = '''type ConfirmationDetailsWithIde = ToolCallConfirmationDetails & {
+            ideConfirmation?: Promise<never>;
+          };
+
+          function createHarness(details: ConfirmationDetailsWithIde) {'''
+          if text.count(old_signature) != 1:
+              raise SystemExit('createHarness signature mismatch')
+          text = text.replace(old_signature, new_signature, 1)
+
+          old_find = 'const statusCall = harness.state.updateStatus.mock.calls.find('
+          new_find = '''const statusCalls = harness.state.updateStatus.mock.calls as unknown as Array<
+                [string, CoreToolCallStatus, { correlationId?: string }?]
+              >;
+              const statusCall = statusCalls.find('''
+          if text.count(old_find) != 1:
+              raise SystemExit('updateStatus find anchor mismatch')
+          tests.write_text(text.replace(old_find, new_find, 1), encoding='utf-8')
+          PY
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Format and commit source-only head
+        run: |
+          set -euo pipefail
+          files=(
+            packages/core/src/scheduler/confirmation-wait-tracker.test.ts
+            packages/core/src/scheduler/confirmation-wait-tracker.ts
+            packages/core/src/scheduler/confirmation.ts
+            packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts
+            packages/core/src/scheduler/confirmation.waiting-state.test.ts
+            packages/core/src/scheduler/scheduler.ts
+          )
+          npx prettier --write "${files[@]}"
+          npx prettier --check "${files[@]}"
+          git diff --check
+          git diff --name-only "$UPSTREAM_HEAD" | sort > /tmp/actual-files
+          printf '%s\n' "${files[@]}" | sort > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git config user.name fieldwork-bot
+          git config user.email fieldwork-bot@users.noreply.github.com
+          git add "${files[@]}"
+          git commit -m 'core: make confirmation waiting ownership call-scoped'
+          test "$(git diff --name-only "$UPSTREAM_HEAD"...HEAD | wc -l)" -eq 6
+
+      - name: Run exact behavior and type gates
+        run: |
+          set -euo pipefail
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.waiting-state.test.ts \
+            src/scheduler/confirmation.waiting-state.repair.test.ts \
+            src/scheduler/confirmation-wait-tracker.test.ts \
+            src/scheduler/confirmation.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
+          git diff --exit-code
+          echo 'FIELDWORK_WAITING_OWNERSHIP_D55=16/16'
+
+      - name: Publish source-only exact head
+        run: |
+          set -euo pipefail
+          git push --force origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          echo "FIELDWORK_SOURCE_HEAD=$(git rev-parse HEAD)"
+          echo "FIELDWORK_SOURCE_BASE=$UPSTREAM_HEAD"
