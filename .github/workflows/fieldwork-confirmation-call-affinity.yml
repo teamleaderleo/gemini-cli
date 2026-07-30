@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - fieldwork/confirmation-call-affinity
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packages/core/src/scheduler/confirmation.affinity.test.ts
+      - .github/workflows/fieldwork-confirmation-call-affinity.yml
 
 permissions:
   contents: read
