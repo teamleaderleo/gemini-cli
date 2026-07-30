@@ -4,6 +4,12 @@ on:
   push:
     branches:
       - fieldwork/confirmation-waiting-finally
+  pull_request:
+    branches:
+      - main
+    paths:
+      - packages/core/src/scheduler/confirmation.waiting-state.test.ts
+      - .github/workflows/fieldwork-confirmation-waiting-state.yml
 
 permissions:
   contents: read
