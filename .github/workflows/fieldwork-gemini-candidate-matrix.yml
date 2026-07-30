@@ -1,0 +1,82 @@
+name: Fieldwork Gemini candidate matrix
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/fieldwork-gemini-candidate-matrix.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-gemini-candidate-matrix
+  cancel-in-progress: true
+
+jobs:
+  focused-candidate:
+    name: ${{ matrix.name }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: discovered-tool abort handoff
+            sha: 4c823c6232fed53363e7bd13ba8a7bf8c9fd0d78
+            test: src/tools/tool-registry.abort.test.ts
+          - name: inline approval call affinity
+            sha: 7b4732dc42207409a91c2054ee8948facc6d06f6
+            test: src/scheduler/confirmation.affinity.test.ts
+          - name: approval waiting-state cleanup
+            sha: d457e26ed85127056e5e24c21d84b2d635671ad6
+            test: src/scheduler/confirmation.waiting-state.test.ts
+          - name: asynchronous kill ownership contract
+            sha: b09768c5acb2a85a4c7af0abd72433abc8f230ab
+            test: src/services/executionLifecycleService.async-kill.test.ts
+
+    steps:
+      - name: Check out exact candidate head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ matrix.sha }}
+          fetch-depth: 1
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run prepared regression
+        id: regression
+        continue-on-error: true
+        run: >-
+          npm run test --workspace @google/gemini-cli-core --
+          ${{ matrix.test }}
+
+      - name: Require predicted pinned-base failure
+        env:
+          OUTCOME: ${{ steps.regression.outcome }}
+        run: |
+          if [ "$OUTCOME" != "failure" ]; then
+            echo "Expected the prepared contract test to fail on its test-only candidate head; observed: $OUTCOME"
+            exit 1
+          fi
+
+      - name: Typecheck core workspace
+        run: npm run typecheck --workspace @google/gemini-cli-core
+
+      - name: Record exact receipt
+        run: |
+          printf '%s\n' \
+            "candidate=${{ matrix.name }}" \
+            "sha=${{ matrix.sha }}" \
+            "test=${{ matrix.test }}" \
+            "node=$(node --version)" \
+            "npm=$(npm --version)" \
+            "regression_outcome=${{ steps.regression.outcome }}"
