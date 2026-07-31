@@ -1,0 +1,45 @@
+name: Fieldwork background temp ownership d55
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/upstream-d55-background-temp-base
+    paths:
+      - .github/workflows/fieldwork-background-temp-ownership-d55.yml
+      - packages/core/src/tools/shell.background-temp-ownership.test.ts
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-background-temp-ownership-d55
+  cancel-in-progress: true
+
+jobs:
+  characterize:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - name: Check out exact characterization head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 1
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Execute exact characterization and type gate
+        run: |
+          set -euo pipefail
+          npx prettier --check packages/core/src/tools/shell.background-temp-ownership.test.ts
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/tools/shell.background-temp-ownership.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
+          git diff --exit-code
+          echo 'FIELDWORK_BACKGROUND_TEMP_OWNERSHIP_D55=1/1'
