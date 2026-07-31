@@ -1,0 +1,161 @@
+name: Fieldwork background temp ownership d55 publisher
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/upstream-d55-background-temp-base
+    paths:
+      - .github/workflows/fieldwork-background-temp-ownership-d55-publisher.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fieldwork-background-temp-ownership-d55-publisher
+  cancel-in-progress: true
+
+env:
+  GEMINI_SOURCE: d55e366f6ab393e024c613d940fead3696d56eac
+  FIELDWORK_SOURCE: 0c398748c8e961e9c09c7df4ec78fdd61a025a32
+  SOURCE_BRANCH: fieldwork/background-temp-ownership-d55-source
+
+jobs:
+  publish-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out exact Fieldwork carrier
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: teamleaderleo/fieldwork
+          ref: ${{ env.FIELDWORK_SOURCE }}
+          path: fieldwork
+          persist-credentials: false
+
+      - name: Check out exact Gemini source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.GEMINI_SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Reproduce exact five-file candidate
+        run: |
+          set -euo pipefail
+          artifacts="$GITHUB_WORKSPACE/fieldwork/findings/F319-gemini-background-temp-ownership/artifacts"
+          cd source
+          test "$(git rev-parse HEAD)" = "$GEMINI_SOURCE"
+          git apply --check "$artifacts/background-temp-ownership-candidate.patch"
+          git apply "$artifacts/background-temp-ownership-candidate.patch"
+          git apply --check "$artifacts/process-exit-finalization-once.patch"
+          git apply "$artifacts/process-exit-finalization-once.patch"
+          cp "$artifacts/shell-background-temp-ownership-repair.test.ts" \
+            packages/core/src/tools/shell-background-temp-ownership-repair.test.ts
+          cp "$artifacts/shell-execution-process-exit-cleanup.test.ts" \
+            packages/core/src/services/shell-execution-process-exit-cleanup.test.ts
+
+          files=(
+            packages/core/src/services/executionLifecycleService.ts
+            packages/core/src/services/shell-execution-process-exit-cleanup.test.ts
+            packages/core/src/services/shellExecutionService.ts
+            packages/core/src/tools/shell-background-temp-ownership-repair.test.ts
+            packages/core/src/tools/shell.ts
+          )
+          npx prettier --write "${files[@]}"
+          npx prettier --check "${files[@]}"
+          git add -N \
+            packages/core/src/services/shell-execution-process-exit-cleanup.test.ts \
+            packages/core/src/tools/shell-background-temp-ownership-repair.test.ts
+          {
+            git diff --name-only
+            git ls-files --others --exclude-standard
+          } | sort -u > /tmp/actual-files
+          printf '%s\n' "${files[@]}" | sort -u > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --check
+
+      - name: Run exact target gate
+        working-directory: source
+        run: |
+          set -euo pipefail
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/tools/shell-background-temp-ownership-repair.test.ts \
+            src/services/shell-execution-process-exit-cleanup.test.ts \
+            src/tools/shell.test.ts \
+            src/services/executionLifecycleService.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
+          git diff --check
+          echo 'FIELDWORK_BACKGROUND_TEMP_SOURCE_TESTS=121-pass/1-existing-skip'
+
+      - name: Commit and publish workflow-free source
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git config user.name fieldwork-bot
+          git config user.email fieldwork-bot@users.noreply.github.com
+          git add \
+            packages/core/src/services/executionLifecycleService.ts \
+            packages/core/src/services/shell-execution-process-exit-cleanup.test.ts \
+            packages/core/src/services/shellExecutionService.ts \
+            packages/core/src/tools/shell-background-temp-ownership-repair.test.ts \
+            packages/core/src/tools/shell.ts
+          git commit -m 'fix(core): transfer shell temp cleanup to process exit'
+          source_head=$(git rev-parse HEAD)
+          test "$(git rev-parse HEAD^)" = "$GEMINI_SOURCE"
+          git diff --name-only "$GEMINI_SOURCE..HEAD" | sort -u > /tmp/source-files
+          cat > /tmp/expected-source-files <<'EOF'
+          packages/core/src/services/executionLifecycleService.ts
+          packages/core/src/services/shell-execution-process-exit-cleanup.test.ts
+          packages/core/src/services/shellExecutionService.ts
+          packages/core/src/tools/shell-background-temp-ownership-repair.test.ts
+          packages/core/src/tools/shell.ts
+          EOF
+          diff -u /tmp/expected-source-files /tmp/source-files
+          if grep -q '^\.github/' /tmp/source-files; then
+            echo 'temporary workflow leaked into source branch' >&2
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+          git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          echo "FIELDWORK_BACKGROUND_TEMP_SOURCE_HEAD=$source_head"
+
+      - name: Export publication receipt
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/fieldwork-background-temp-ownership-source"
+          mkdir -p "$output"
+          cd source
+          git format-patch --stdout -1 HEAD > "$output/source.patch"
+          git diff --name-only "$GEMINI_SOURCE..HEAD" | sort -u > "$output/files.txt"
+          {
+            echo "gemini_source=$GEMINI_SOURCE"
+            echo "fieldwork_source=$FIELDWORK_SOURCE"
+            echo "source_branch=$SOURCE_BRANCH"
+            echo "source_head=$(git rev-parse HEAD)"
+            echo "source_parent=$(git rev-parse HEAD^)"
+            echo "runner=$RUNNER_OS"
+          } > "$output/metadata.txt"
+          sha256sum "$output"/* > "$output/SHA256SUMS"
+          cat "$output/metadata.txt"
+          cat "$output/SHA256SUMS"
+
+      - name: Upload publication receipt
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-background-temp-ownership-d55-source
+          path: ${{ runner.temp }}/fieldwork-background-temp-ownership-source
+          if-no-files-found: error
+          retention-days: 14
