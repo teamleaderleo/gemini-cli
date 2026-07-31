@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/fieldwork-background-claim-atomicity-publisher.yml
       - .fieldwork/apply-background-claim-atomicity.py
+      - .fieldwork/repair-background-log-publication-order.py
   workflow_dispatch:
 
 permissions:
@@ -56,6 +57,7 @@ jobs:
           set -euo pipefail
           test "$(git -C source rev-parse HEAD)" = "$GEMINI_SOURCE"
           python3 publisher/.fieldwork/apply-background-claim-atomicity.py source
+          python3 publisher/.fieldwork/repair-background-log-publication-order.py source
 
           cd source
           files=(
