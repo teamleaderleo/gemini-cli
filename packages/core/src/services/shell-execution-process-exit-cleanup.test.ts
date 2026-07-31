@@ -76,6 +76,49 @@ describe('ShellExecutionService process-exit cleanup', () => {
     ExecutionLifecycleService.completeExecution(executionId, { exitCode: 0 });
   });
 
+  it('runs a manual background claim before the foreground result settles', async () => {
+    const events: string[] = [];
+    const cleanup = vi.fn().mockResolvedValue(undefined);
+    const handle = await ShellExecutionService.execute(
+      'exec sleep 10',
+      process.cwd(),
+      vi.fn(),
+      new AbortController().signal,
+      false,
+      {
+        sanitizationConfig,
+        sandboxManager: new NoopSandboxManager(),
+        sessionId: 'fieldwork-manual-background-claim',
+        onBackgroundClaim: () => events.push('claim'),
+        onProcessExit: cleanup,
+      },
+    );
+
+    expect(handle.pid).toBeTypeOf('number');
+    const child = activeChildProcess(handle.pid!);
+    expect(child).toBeDefined();
+
+    void handle.result.then(() => events.push('resolved'));
+    expect(
+      ShellExecutionService.background(
+        handle.pid!,
+        'fieldwork-manual-background-claim',
+        'sleep 10',
+      ),
+    ).toBe(true);
+    await handle.result;
+    expect(events).toEqual(['claim', 'resolved']);
+
+    const closed = new Promise<void>((resolve) => {
+      child!.process.once('close', () => resolve());
+    });
+    expect(child!.process.kill('SIGTERM')).toBe(true);
+    await closed;
+    await vi.waitFor(() => {
+      expect(cleanup).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it('invokes transferred cleanup after child-process exit', async () => {
     const cleanup = vi.fn().mockResolvedValue(undefined);
 

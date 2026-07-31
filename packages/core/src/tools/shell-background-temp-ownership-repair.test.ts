@@ -61,6 +61,7 @@ describe('background shell temporary-resource cleanup transfer', () => {
   let targetDir: string;
   let extractedTempFile: string | undefined;
   let resolveExecution: (result: ShellExecutionResult) => void;
+  let backgroundClaim: ShellExecutionConfig['onBackgroundClaim'];
   let processExitCleanup: ShellExecutionConfig['onProcessExit'];
 
   beforeAll(async () => {
@@ -73,6 +74,7 @@ describe('background shell temporary-resource cleanup transfer', () => {
       path.join(os.tmpdir(), 'shell-temp-owner-test-'),
     );
     extractedTempFile = undefined;
+    backgroundClaim = undefined;
     processExitCleanup = undefined;
     backgroundMock.mockReturnValue(false);
 
@@ -149,6 +151,7 @@ describe('background shell temporary-resource cleanup transfer', () => {
       ) => {
         const match = command.match(/_bgpids_file=([^\r\n]+)/);
         extractedTempFile = match?.[1].replace(/['"]/g, '');
+        backgroundClaim = shellExecutionConfig.onBackgroundClaim;
         processExitCleanup = shellExecutionConfig.onProcessExit;
         return {
           pid: 12345,
@@ -203,6 +206,7 @@ describe('background shell temporary-resource cleanup transfer', () => {
 
   it('transfers cleanup only after background ownership is acknowledged', async () => {
     backgroundMock.mockImplementation(() => {
+      backgroundClaim?.();
       resolveExecution(
         completedResult({
           exitCode: null,
@@ -231,6 +235,35 @@ describe('background shell temporary-resource cleanup transfer', () => {
     expect(fs.existsSync(path.dirname(extractedTempFile!))).toBe(false);
   });
 
+  it('transfers foreground cleanup before manual background settlement', async () => {
+    const invocation = shellTool.build({ command: 'sleep 10' });
+    const execution = invocation.execute({
+      abortSignal: new AbortController().signal,
+    });
+
+    await vi.waitFor(() => {
+      expect(executeMock).toHaveBeenCalledTimes(1);
+      expect(extractedTempFile).toBeDefined();
+      expect(backgroundClaim).toBeTypeOf('function');
+      expect(processExitCleanup).toBeTypeOf('function');
+    });
+
+    backgroundClaim?.();
+    expect(fs.existsSync(path.dirname(extractedTempFile!))).toBe(true);
+
+    resolveExecution(
+      completedResult({
+        exitCode: null,
+        backgrounded: true,
+      }),
+    );
+    await execution;
+
+    expect(fs.existsSync(path.dirname(extractedTempFile!))).toBe(true);
+    await processExitCleanup?.();
+    expect(fs.existsSync(path.dirname(extractedTempFile!))).toBe(false);
+  });
+
   it('keeps foreground cleanup creator-owned', async () => {
     const invocation = shellTool.build({ command: 'true' });
     const execution = invocation.execute({
@@ -242,7 +275,8 @@ describe('background shell temporary-resource cleanup transfer', () => {
       expect(extractedTempFile).toBeDefined();
     });
 
-    expect(processExitCleanup).toBeUndefined();
+    expect(backgroundClaim).toBeTypeOf('function');
+    expect(processExitCleanup).toBeTypeOf('function');
     resolveExecution(completedResult());
     await execution;
 

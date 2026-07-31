@@ -69,6 +69,8 @@ export interface ExternalExecutionRegistration {
   writeInput?: (input: string) => void;
   kill?: () => void;
   isActive?: () => boolean;
+  /** Called synchronously after a background claim is accepted and before result settlement. */
+  onBackgroundClaim?: () => void;
   formatInjection?: FormatInjectionFn;
   completionBehavior?: CompletionBehavior;
 }
@@ -99,6 +101,7 @@ interface ManagedExecutionBase {
   label?: string;
   output: string;
   backgrounded?: boolean;
+  onBackgroundClaim?: () => void;
   formatInjection?: FormatInjectionFn;
   completionBehavior?: CompletionBehavior;
   getBackgroundOutput?: () => string;
@@ -299,6 +302,7 @@ export class ExecutionLifecycleService {
       writeInput: registration.writeInput,
       kill: registration.kill,
       isActive: registration.isActive,
+      onBackgroundClaim: registration.onBackgroundClaim,
       formatInjection: registration.formatInjection,
       completionBehavior: registration.completionBehavior,
     });
@@ -493,6 +497,8 @@ export class ExecutionLifecycleService {
     }
 
     const output = execution.getBackgroundOutput?.() ?? execution.output;
+
+    execution.onBackgroundClaim?.();
 
     resolve({
       rawOutput: Buffer.from(''),

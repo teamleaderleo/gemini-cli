@@ -139,6 +139,8 @@ export interface ShellExecutionConfig {
   backgroundCompletionBehavior?: 'inject' | 'notify' | 'silent';
   originalCommand?: string;
   sessionId?: string;
+  /** Synchronous ownership transfer before a foreground result settles as backgrounded. */
+  onBackgroundClaim?: () => void;
   /** Best-effort cleanup for resources that remain owned until actual exit. */
   onProcessExit?: () => void | Promise<void>;
   env?: Record<string, string>;
@@ -651,6 +653,7 @@ export class ShellExecutionService {
                 output,
                 error ?? undefined,
               ),
+            onBackgroundClaim: shellExecutionConfig.onBackgroundClaim,
             completionBehavior:
               shellExecutionConfig.backgroundCompletionBehavior || 'silent',
           })
@@ -1059,6 +1062,7 @@ export class ShellExecutionService {
             output,
             error ?? undefined,
           ),
+        onBackgroundClaim: shellExecutionConfig.onBackgroundClaim,
         completionBehavior:
           shellExecutionConfig.backgroundCompletionBehavior || 'silent',
       }).result;

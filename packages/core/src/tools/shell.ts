@@ -518,6 +518,13 @@ export class ShellToolInvocation extends BaseToolInvocation<
       }
     };
 
+    const claimTemporaryResourceTransfer = (): void => {
+      tempCleanupTransferred = true;
+      if (processExitObserved) {
+        void cleanupTemporaryResources();
+      }
+    };
+
     const timeoutMs = this.context.config.getShellToolInactivityTimeout();
     const timeoutController = new AbortController();
     let timeoutTimer: NodeJS.Timeout | undefined;
@@ -715,9 +722,8 @@ export class ShellToolInvocation extends BaseToolInvocation<
             backgroundCompletionBehavior:
               this.context.config.getShellBackgroundCompletionBehavior(),
             originalCommand: strippedCommand,
-            onProcessExit: this.params.is_background
-              ? cleanupAfterTransferredExit
-              : undefined,
+            onBackgroundClaim: claimTemporaryResourceTransfer,
+            onProcessExit: cleanupAfterTransferredExit,
           },
         );
 
@@ -740,14 +746,7 @@ export class ShellToolInvocation extends BaseToolInvocation<
           const sessionId = this.context.config?.getSessionId?.() ?? 'default';
           const delay = this.params.delay_ms ?? BACKGROUND_DELAY_MS;
           setTimeout(() => {
-            tempCleanupTransferred = ShellExecutionService.background(
-              pid,
-              sessionId,
-              strippedCommand,
-            );
-            if (tempCleanupTransferred && processExitObserved) {
-              void cleanupTemporaryResources();
-            }
+            ShellExecutionService.background(pid, sessionId, strippedCommand);
           }, delay);
 
           // Wait for the delay amount to see if command returns quickly
