@@ -7,6 +7,7 @@ on:
     paths:
       - .github/workflows/fieldwork-manual-background-temp-ownership-publisher.yml
       - .fieldwork/apply-manual-background-temp-ownership.py
+      - .fieldwork/apply-manual-background-temp-ownership-v2.py
   workflow_dispatch:
 
 permissions:
@@ -56,7 +57,7 @@ jobs:
           set -euo pipefail
           test "$(git -C source rev-parse HEAD)" = "$GEMINI_SOURCE"
           python3 \
-            publisher/.fieldwork/apply-manual-background-temp-ownership.py \
+            publisher/.fieldwork/apply-manual-background-temp-ownership-v2.py \
             source
 
           cd source
