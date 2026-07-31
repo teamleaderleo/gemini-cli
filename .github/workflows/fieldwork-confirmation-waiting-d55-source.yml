@@ -41,6 +41,7 @@ jobs:
           test "$(git rev-parse "origin/$UPSTREAM_BRANCH")" = "$UPSTREAM_HEAD"
           git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership-exact.yml" > /tmp/exact.yml
           git show "origin/$STAGED_BRANCH:.github/workflows/fieldwork-confirmation-waiting-ownership.yml" > /tmp/ownership.yml
+          git show "origin/$STAGED_BRANCH:packages/core/src/scheduler/confirmation.waiting-state.test.ts" > /tmp/waiting-state.test.ts
           python3 <<'PY'
           from pathlib import Path
 
@@ -72,6 +73,8 @@ jobs:
           test "$(git rev-parse HEAD)" = "$UPSTREAM_HEAD"
           cp /tmp/ownership.yml \
             .github/workflows/fieldwork-confirmation-waiting-ownership.yml
+          cp /tmp/waiting-state.test.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.test.ts
 
       - name: Apply repair and fixture typing
         shell: bash
