@@ -116,9 +116,8 @@ describe('background claim atomicity characterization', () => {
 
     await clearBackgroundPublication(executionId, sessionId);
     ExecutionLifecycleService.completeExecution(executionId, { exitCode: 0 });
-    await expect(handle.result).resolves.toMatchObject({
-      pid: executionId,
-      backgrounded: undefined,
-    });
+    const foregroundResult = await handle.result;
+    expect(foregroundResult.pid).toBe(executionId);
+    expect(foregroundResult.backgrounded).toBeUndefined();
   });
 });
