@@ -1,0 +1,136 @@
+name: Fieldwork background claim atomicity publisher
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/background-claim-atomicity-characterization
+    paths:
+      - .github/workflows/fieldwork-background-claim-atomicity-publisher.yml
+      - .fieldwork/apply-background-claim-atomicity.py
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fieldwork-background-claim-atomicity-publisher
+  cancel-in-progress: true
+
+env:
+  GEMINI_SOURCE: 1c8a198295ecbd01971bb79f0ed6afed16e66dbf
+  SOURCE_BRANCH: fieldwork/background-claim-atomicity-source
+
+jobs:
+  publish-source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - name: Check out exact publisher
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: publisher
+          persist-credentials: false
+
+      - name: Check out accepted Gemini source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.GEMINI_SOURCE }}
+          path: source
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Use Node.js 22
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: source/package-lock.json
+
+      - name: Install locked dependencies
+        working-directory: source
+        run: npm ci
+
+      - name: Apply bounded atomicity repair
+        run: |
+          set -euo pipefail
+          test "$(git -C source rev-parse HEAD)" = "$GEMINI_SOURCE"
+          python3 publisher/.fieldwork/apply-background-claim-atomicity.py source
+
+          cd source
+          files=(
+            packages/core/src/services/executionLifecycleService.ts
+            packages/core/src/services/executionLifecycleService.backgroundClaim.test.ts
+            packages/core/src/services/shellExecutionService.ts
+          )
+          npx prettier --write "${files[@]}"
+          npx prettier --check "${files[@]}"
+          git diff --name-only | sort -u > /tmp/actual-files
+          printf '%s\n' "${files[@]}" | sort -u > /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --check
+          echo 'FIELDWORK_BACKGROUND_CLAIM_REPAIR_FENCE=3/3'
+
+      - name: Run exact target gate
+        working-directory: source
+        run: |
+          set -euo pipefail
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/services/executionLifecycleService.backgroundClaim.test.ts \
+            src/services/executionLifecycleService.test.ts \
+            src/services/shell-execution-process-exit-cleanup.test.ts \
+            src/tools/shell-background-temp-ownership-repair.test.ts
+          npm run typecheck --workspace @google/gemini-cli-core
+          git diff --check
+          echo 'FIELDWORK_BACKGROUND_CLAIM_REPAIR_TESTS=39/39'
+
+      - name: Commit and publish workflow-free source
+        working-directory: source
+        run: |
+          set -euo pipefail
+          git config user.name fieldwork-bot
+          git config user.email fieldwork-bot@users.noreply.github.com
+          git add \
+            packages/core/src/services/executionLifecycleService.ts \
+            packages/core/src/services/executionLifecycleService.backgroundClaim.test.ts \
+            packages/core/src/services/shellExecutionService.ts
+          git commit -m 'fix(core): make background claims atomic'
+          source_head=$(git rev-parse HEAD)
+          test "$(git rev-parse HEAD^)" = "$GEMINI_SOURCE"
+          git diff --name-only "$GEMINI_SOURCE..HEAD" | sort -u > /tmp/source-files
+          diff -u /tmp/expected-files /tmp/source-files
+          if grep -q '^\.github/' /tmp/source-files; then
+            echo 'temporary publisher leaked into source branch' >&2
+            exit 1
+          fi
+          test -z "$(git status --porcelain)"
+          git push --force-with-lease origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          echo "FIELDWORK_BACKGROUND_CLAIM_SOURCE_HEAD=$source_head"
+
+      - name: Export publication receipt
+        run: |
+          set -euo pipefail
+          output="$RUNNER_TEMP/fieldwork-background-claim-source"
+          mkdir -p "$output"
+          cd source
+          git format-patch --stdout -1 HEAD > "$output/source.patch"
+          git diff --name-only "$GEMINI_SOURCE..HEAD" | sort -u > "$output/files.txt"
+          {
+            echo "gemini_source=$GEMINI_SOURCE"
+            echo "publisher_head=${{ github.event.pull_request.head.sha }}"
+            echo "source_branch=$SOURCE_BRANCH"
+            echo "source_head=$(git rev-parse HEAD)"
+            echo "source_parent=$(git rev-parse HEAD^)"
+            echo "runner=$RUNNER_OS"
+          } > "$output/metadata.txt"
+          sha256sum "$output"/* > "$output/SHA256SUMS"
+          cat "$output/metadata.txt"
+          cat "$output/SHA256SUMS"
+
+      - name: Upload publication receipt
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-background-claim-atomicity-source
+          path: ${{ runner.temp }}/fieldwork-background-claim-source
+          if-no-files-found: error
+          retention-days: 14
