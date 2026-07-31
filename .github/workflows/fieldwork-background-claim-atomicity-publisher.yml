@@ -65,7 +65,10 @@ jobs:
           )
           npx prettier --write "${files[@]}"
           npx prettier --check "${files[@]}"
-          git diff --name-only | sort -u > /tmp/actual-files
+          {
+            git diff --name-only
+            git ls-files --others --exclude-standard
+          } | sort -u > /tmp/actual-files
           printf '%s\n' "${files[@]}" | sort -u > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
           git diff --check
