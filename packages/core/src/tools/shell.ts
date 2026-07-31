@@ -487,6 +487,36 @@ export class ShellToolInvocation extends BaseToolInvocation<
     const isWindows = os.platform() === 'win32';
     let tempFilePath = '';
     let tempDir = '';
+    let tempCleanupTransferred = false;
+    let processExitObserved = false;
+    let tempCleanupPromise: Promise<void> | undefined;
+
+    const cleanupTemporaryResources = (): Promise<void> => {
+      tempCleanupPromise ??= (async () => {
+        if (tempFilePath) {
+          try {
+            await fsPromises.unlink(tempFilePath);
+          } catch {
+            // Ignore errors during unlink.
+          }
+        }
+        if (tempDir) {
+          try {
+            await fsPromises.rm(tempDir, { recursive: true, force: true });
+          } catch {
+            // Ignore errors during directory cleanup.
+          }
+        }
+      })();
+      return tempCleanupPromise;
+    };
+
+    const cleanupAfterTransferredExit = async (): Promise<void> => {
+      processExitObserved = true;
+      if (tempCleanupTransferred) {
+        await cleanupTemporaryResources();
+      }
+    };
 
     const timeoutMs = this.context.config.getShellToolInactivityTimeout();
     const timeoutController = new AbortController();
@@ -685,6 +715,9 @@ export class ShellToolInvocation extends BaseToolInvocation<
             backgroundCompletionBehavior:
               this.context.config.getShellBackgroundCompletionBehavior(),
             originalCommand: strippedCommand,
+            onProcessExit: this.params.is_background
+              ? cleanupAfterTransferredExit
+              : undefined,
           },
         );
 
@@ -707,7 +740,14 @@ export class ShellToolInvocation extends BaseToolInvocation<
           const sessionId = this.context.config?.getSessionId?.() ?? 'default';
           const delay = this.params.delay_ms ?? BACKGROUND_DELAY_MS;
           setTimeout(() => {
-            ShellExecutionService.background(pid, sessionId, strippedCommand);
+            tempCleanupTransferred = ShellExecutionService.background(
+              pid,
+              sessionId,
+              strippedCommand,
+            );
+            if (tempCleanupTransferred && processExitObserved) {
+              void cleanupTemporaryResources();
+            }
           }, delay);
 
           // Wait for the delay amount to see if command returns quickly
@@ -1064,24 +1104,8 @@ export class ShellToolInvocation extends BaseToolInvocation<
       signal.removeEventListener('abort', onAbort);
       timeoutController.signal.removeEventListener('abort', onAbort);
 
-      // Only clean up if NOT running in background.
-      // Background processes need the temp directory and PID file to remain
-      // available until they exit.
-      if (!this.params.is_background) {
-        if (tempFilePath) {
-          try {
-            await fsPromises.unlink(tempFilePath);
-          } catch {
-            // Ignore errors during unlink
-          }
-        }
-        if (tempDir) {
-          try {
-            await fsPromises.rm(tempDir, { recursive: true, force: true });
-          } catch {
-            // Ignore errors during rm
-          }
-        }
+      if (!tempCleanupTransferred) {
+        await cleanupTemporaryResources();
       }
     }
   }

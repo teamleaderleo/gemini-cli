@@ -139,6 +139,8 @@ export interface ShellExecutionConfig {
   backgroundCompletionBehavior?: 'inject' | 'notify' | 'silent';
   originalCommand?: string;
   sessionId?: string;
+  /** Best-effort cleanup for resources that remain owned until actual exit. */
+  onProcessExit?: () => void | Promise<void>;
   env?: Record<string, string>;
 }
 
@@ -341,6 +343,16 @@ export class ShellExecutionService {
     }
 
     this.backgroundLogPids.delete(pid);
+  }
+
+  private static async runProcessExitCleanup(
+    shellExecutionConfig: ShellExecutionConfig,
+  ): Promise<void> {
+    try {
+      await shellExecutionConfig.onProcessExit?.();
+    } catch (error) {
+      debugLogger.warn('Shell process-exit cleanup failed:', error);
+    }
   }
 
   /**
@@ -736,6 +748,10 @@ export class ShellExecutionService {
         code: number | null,
         signal: NodeJS.Signals | null,
       ) => {
+        if (exited) {
+          return;
+        }
+
         cleanup();
         cmdCleanup?.();
 
@@ -791,6 +807,9 @@ export class ShellExecutionService {
           });
 
           ExecutionLifecycleService.completeWithResult(pid, resultPayload);
+          void ShellExecutionService.runProcessExitCleanup(
+            shellExecutionConfig,
+          );
         } else {
           resolveWithoutPid?.(resultPayload);
         }
@@ -1297,6 +1316,10 @@ export class ShellExecutionService {
               pid: ptyPid,
               executionMethod: ptyInfo?.name ?? 'node-pty',
             });
+
+            void ShellExecutionService.runProcessExitCleanup(
+              shellExecutionConfig,
+            );
           };
 
           if (abortSignal.aborted) {
@@ -1417,9 +1440,17 @@ export class ShellExecutionService {
    *
    * @param pid The process ID of the target PTY.
    */
-  static background(pid: number, sessionId?: string, command?: string): void {
+  static background(
+    pid: number,
+    sessionId?: string,
+    command?: string,
+  ): boolean {
     const activePty = this.activePtys.get(pid);
     const activeChild = this.activeChildProcesses.get(pid);
+
+    if (!ExecutionLifecycleService.canBackground(pid)) {
+      return false;
+    }
 
     const resolvedSessionId =
       sessionId ?? activePty?.sessionId ?? activeChild?.sessionId;
@@ -1487,7 +1518,7 @@ export class ShellExecutionService {
 
     this.backgroundLogPids.add(pid);
 
-    ExecutionLifecycleService.background(pid);
+    return ExecutionLifecycleService.background(pid);
   }
 
   static subscribe(

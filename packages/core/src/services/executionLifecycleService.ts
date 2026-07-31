@@ -474,15 +474,22 @@ export class ExecutionLifecycleService {
     this.settleExecution(executionId, result);
   }
 
-  static background(executionId: number): void {
+  static canBackground(executionId: number): boolean {
+    return (
+      this.activeResolvers.has(executionId) &&
+      this.activeExecutions.has(executionId)
+    );
+  }
+
+  static background(executionId: number): boolean {
     const resolve = this.activeResolvers.get(executionId);
     if (!resolve) {
-      return;
+      return false;
     }
 
     const execution = this.activeExecutions.get(executionId);
     if (!execution) {
-      return;
+      return false;
     }
 
     const output = execution.getBackgroundOutput?.() ?? execution.output;
@@ -516,6 +523,7 @@ export class ExecutionLifecycleService {
     for (const listener of this.backgroundStartListeners) {
       listener(info);
     }
+    return true;
   }
 
   static subscribe(
