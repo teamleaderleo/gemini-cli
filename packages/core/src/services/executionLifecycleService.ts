@@ -69,7 +69,10 @@ export interface ExternalExecutionRegistration {
   writeInput?: (input: string) => void;
   kill?: () => void;
   isActive?: () => boolean;
-  /** Called synchronously after a background claim is accepted and before result settlement. */
+  /**
+   * Called synchronously after a background claim is reserved and before result settlement.
+   * Throwing rejects the claim; re-entrant background attempts are denied.
+   */
   onBackgroundClaim?: () => void;
   formatInjection?: FormatInjectionFn;
   completionBehavior?: CompletionBehavior;
@@ -188,6 +191,7 @@ export class ExecutionLifecycleService {
     new Set<BackgroundCompletionListener>();
 
   private static backgroundStartListeners = new Set<BackgroundStartListener>();
+  private static backgroundClaims = new Set<number>();
 
   /**
    * Registers a listener that fires when any execution is moved to the background.
@@ -277,6 +281,7 @@ export class ExecutionLifecycleService {
     this.backgroundCompletionListeners.clear();
     this.injectionService = null;
     this.backgroundStartListeners.clear();
+    this.backgroundClaims.clear();
     this.nextExecutionId = NON_PROCESS_EXECUTION_ID_START;
   }
 
@@ -481,7 +486,8 @@ export class ExecutionLifecycleService {
   static canBackground(executionId: number): boolean {
     return (
       this.activeResolvers.has(executionId) &&
-      this.activeExecutions.has(executionId)
+      this.activeExecutions.has(executionId) &&
+      !this.backgroundClaims.has(executionId)
     );
   }
 
@@ -492,13 +498,28 @@ export class ExecutionLifecycleService {
     }
 
     const execution = this.activeExecutions.get(executionId);
-    if (!execution) {
+    if (!execution || this.backgroundClaims.has(executionId)) {
       return false;
     }
 
     const output = execution.getBackgroundOutput?.() ?? execution.output;
 
-    execution.onBackgroundClaim?.();
+    this.backgroundClaims.add(executionId);
+    try {
+      execution.onBackgroundClaim?.();
+    } catch (error) {
+      debugLogger.warn('Background claim callback failed:', error);
+      return false;
+    } finally {
+      this.backgroundClaims.delete(executionId);
+    }
+
+    if (
+      this.activeResolvers.get(executionId) !== resolve ||
+      this.activeExecutions.get(executionId) !== execution
+    ) {
+      return false;
+    }
 
     resolve({
       rawOutput: Buffer.from(''),
@@ -527,7 +548,11 @@ export class ExecutionLifecycleService {
         (execution.formatInjection ? 'inject' : 'silent'),
     };
     for (const listener of this.backgroundStartListeners) {
-      listener(info);
+      try {
+        listener(info);
+      } catch (error) {
+        debugLogger.warn('Background start listener failed:', error);
+      }
     }
     return true;
   }

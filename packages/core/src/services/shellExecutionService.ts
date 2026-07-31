@@ -1469,19 +1469,13 @@ export class ShellExecutionService {
     }
 
     const MAX_BACKGROUND_PROCESS_HISTORY_SIZE = 100;
+    const existingHistory =
+      this.backgroundProcessHistory.get(resolvedSessionId);
+    const historySnapshot = existingHistory
+      ? new Map(existingHistory)
+      : undefined;
     const history =
-      this.backgroundProcessHistory.get(resolvedSessionId) ??
-      new Map<
-        number,
-        {
-          command: string;
-          status: 'running' | 'exited';
-          exitCode?: number | null;
-          signal?: number | null;
-          startTime: number;
-          endTime?: number;
-        }
-      >();
+      existingHistory ?? new Map<number, BackgroundProcessRecord>();
 
     if (history.size >= MAX_BACKGROUND_PROCESS_HISTORY_SIZE) {
       const oldestPid = history.keys().next().value;
@@ -1497,7 +1491,18 @@ export class ShellExecutionService {
     });
     this.backgroundProcessHistory.set(resolvedSessionId, history);
 
-    // Set up background logging
+    if (!ExecutionLifecycleService.background(pid)) {
+      if (historySnapshot) {
+        this.backgroundProcessHistory.set(resolvedSessionId, historySnapshot);
+      } else {
+        this.backgroundProcessHistory.delete(resolvedSessionId);
+      }
+      return false;
+    }
+
+    // The lifecycle claim has settled synchronously. Set up logging before the
+    // foreground promise continuation runs, without leaving rejected-attempt
+    // streams or files that can race an immediate retry.
     const logPath = this.getLogFilePath(pid);
     const logDir = this.getLogDir();
     try {
@@ -1521,8 +1526,7 @@ export class ShellExecutionService {
     }
 
     this.backgroundLogPids.add(pid);
-
-    return ExecutionLifecycleService.background(pid);
+    return true;
   }
 
   static subscribe(
