@@ -224,6 +224,26 @@ interface ExternalModificationResult {
   error?: string;
 }
 
+function getWaitingCallForModification(
+  state: SchedulerStateManager,
+  callId: string,
+  expectedCall?: WaitingToolCall,
+): WaitingToolCall {
+  const currentCall = state.getToolCall(callId);
+  if (
+    !currentCall ||
+    currentCall.status !== CoreToolCallStatus.AwaitingApproval
+  ) {
+    throw new Error(
+      `Tool call ${callId} is no longer awaiting approval during modification`,
+    );
+  }
+  if (expectedCall && currentCall !== expectedCall) {
+    throw new Error(`Tool call ${callId} changed during modification`);
+  }
+  return currentCall;
+}
+
 /**
  * Handles modification via an external editor (e.g. Vim).
  * Returns a result indicating success or failure with an error message.
@@ -247,19 +267,21 @@ async function handleExternalModification(
     return { error: NO_EDITOR_AVAILABLE_ERROR };
   }
 
+  const callId = toolCall.request.callId;
+  const waitingCall = getWaitingCallForModification(state, callId);
   const result = await modifier.handleModifyWithEditor(
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    state.firstActiveCall as WaitingToolCall,
+    waitingCall,
     editor,
     signal,
   );
   if (result) {
-    const newInvocation = toolCall.tool.build(result.updatedParams);
-    state.updateArgs(
-      toolCall.request.callId,
-      result.updatedParams,
-      newInvocation,
+    const currentWaitingCall = getWaitingCallForModification(
+      state,
+      callId,
+      waitingCall,
     );
+    const newInvocation = currentWaitingCall.tool.build(result.updatedParams);
+    state.updateArgs(callId, result.updatedParams, newInvocation);
   }
   return {};
 }
@@ -274,19 +296,17 @@ async function handleInlineModification(
   signal: AbortSignal,
 ): Promise<void> {
   const { state, modifier } = deps;
-  const result = await modifier.applyInlineModify(
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    state.firstActiveCall as WaitingToolCall,
-    payload,
-    signal,
-  );
+  const callId = toolCall.request.callId;
+  const waitingCall = getWaitingCallForModification(state, callId);
+  const result = await modifier.applyInlineModify(waitingCall, payload, signal);
   if (result) {
-    const newInvocation = toolCall.tool.build(result.updatedParams);
-    state.updateArgs(
-      toolCall.request.callId,
-      result.updatedParams,
-      newInvocation,
+    const currentWaitingCall = getWaitingCallForModification(
+      state,
+      callId,
+      waitingCall,
     );
+    const newInvocation = currentWaitingCall.tool.build(result.updatedParams);
+    state.updateArgs(callId, result.updatedParams, newInvocation);
   }
 }
 
