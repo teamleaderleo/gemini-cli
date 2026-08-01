@@ -1,0 +1,386 @@
+name: Fieldwork confirmation call affinity repair
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/fieldwork-confirmation-call-affinity-repair.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  BASE_HEAD: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+  PRIOR_CANDIDATE_HEAD: b359ece8a2bd059aef870a084ab9494eff16fa8f
+  SOURCE_BRANCH: fix/scheduler-confirmation-call-affinity
+
+jobs:
+  validate-and-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Restore reviewed source and focused controls
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$PRIOR_CANDIDATE_HEAD"
+          git checkout "$PRIOR_CANDIDATE_HEAD" -- \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts
+      - name: Add parallel scheduler ordering control
+        run: |
+          cat > packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts <<'EOF'
+          /**
+           * @license
+           * Copyright 2026 Google LLC
+           * SPDX-License-Identifier: Apache-2.0
+           */
+
+          import { beforeEach, describe, expect, it, vi, type Mocked } from 'vitest';
+
+          const runInDevTraceSpan = vi.hoisted(() =>
+            vi.fn(async (_options, callback) =>
+              callback({ metadata: { attributes: {} } }),
+            ),
+          );
+
+          vi.mock('../telemetry/trace.js', () => ({ runInDevTraceSpan }));
+          vi.mock('../telemetry/loggers.js', () => ({ logToolCall: vi.fn() }));
+          vi.mock('../telemetry/types.js', () => ({
+            ToolCallEvent: vi.fn().mockImplementation((call) => call),
+          }));
+          vi.mock('./policy.js', async (importOriginal) => {
+            const actual = await importOriginal<typeof import('./policy.js')>();
+            return {
+              ...actual,
+              checkPolicy: vi.fn(),
+              updatePolicy: vi.fn(),
+            };
+          });
+          vi.mock('./tool-executor.js');
+          vi.mock('./tool-modifier.js');
+
+          import { MessageBus } from '../confirmation-bus/message-bus.js';
+          import {
+            MessageBusType,
+            type ToolCallsUpdateMessage,
+          } from '../confirmation-bus/types.js';
+          import type { Config } from '../config/config.js';
+          import type { AgentLoopContext } from '../config/agent-loop-context.js';
+          import type { PolicyEngine } from '../policy/policy-engine.js';
+          import { ApprovalMode, PolicyDecision } from '../policy/types.js';
+          import {
+            ToolConfirmationOutcome,
+            type AnyDeclarativeTool,
+            type AnyToolInvocation,
+          } from '../tools/tools.js';
+          import { checkPolicy, updatePolicy } from './policy.js';
+          import { Scheduler } from './scheduler.js';
+          import { ToolExecutor } from './tool-executor.js';
+          import { ToolModificationHandler } from './tool-modifier.js';
+          import {
+            CoreToolCallStatus,
+            ROOT_SCHEDULER_ID,
+            type SuccessfulToolCall,
+            type ToolCallRequestInfo,
+            type ToolCallResponseInfo,
+            type WaitingToolCall,
+          } from './types.js';
+
+          interface CallSnapshot {
+            callId: string;
+            status: CoreToolCallStatus;
+            args: Record<string, unknown>;
+            correlationId?: string;
+          }
+
+          function snapshotCalls(message: ToolCallsUpdateMessage): CallSnapshot[] {
+            return message.toolCalls.map((call) => ({
+              callId: call.request.callId,
+              status: call.status,
+              args: { ...call.request.args },
+              correlationId:
+                call.status === CoreToolCallStatus.AwaitingApproval
+                  ? call.correlationId
+                  : undefined,
+            }));
+          }
+
+          describe('Scheduler confirmation call affinity', () => {
+            let messageBus: MessageBus;
+            let config: Mocked<Config>;
+            let executor: Mocked<ToolExecutor>;
+            let modifier: Mocked<ToolModificationHandler>;
+            let tool: Mocked<AnyDeclarativeTool>;
+            let build: ReturnType<typeof vi.fn>;
+            let snapshots: CallSnapshot[][];
+
+            beforeEach(() => {
+              vi.clearAllMocks();
+
+              const policyEngine = {
+                check: vi.fn().mockResolvedValue({
+                  decision: PolicyDecision.ASK_USER,
+                }),
+              } as unknown as Mocked<PolicyEngine>;
+              messageBus = new MessageBus(policyEngine);
+              snapshots = [];
+              messageBus.on(
+                MessageBusType.TOOL_CALLS_UPDATE,
+                (message: ToolCallsUpdateMessage) => {
+                  snapshots.push(snapshotCalls(message));
+                },
+              );
+
+              build = vi.fn((args: Record<string, unknown>) => ({
+                params: args,
+                getDescription: vi
+                  .fn()
+                  .mockReturnValue(`test ${String(args['marker'])}`),
+                shouldConfirmExecute: vi.fn().mockResolvedValue({
+                  type: 'info',
+                  title: `Approve ${String(args['marker'])}`,
+                  prompt: 'Approve this call?',
+                  onConfirm: vi.fn(),
+                }),
+              }));
+              tool = {
+                name: 'test-tool',
+                description: 'test tool',
+                build,
+              } as unknown as Mocked<AnyDeclarativeTool>;
+
+              const toolRegistry = {
+                getTool: vi.fn().mockReturnValue(tool),
+                getAllToolNames: vi.fn().mockReturnValue(['test-tool']),
+              };
+              config = {
+                getHookSystem: vi.fn().mockReturnValue(undefined),
+                getApprovalMode: vi.fn().mockReturnValue(ApprovalMode.DEFAULT),
+                getTelemetryLogPromptsEnabled: vi.fn().mockReturnValue(false),
+                getTelemetryTracesEnabled: vi.fn().mockReturnValue(false),
+                getSessionId: vi.fn().mockReturnValue('affinity-session'),
+              } as unknown as Mocked<Config>;
+
+              executor = {
+                execute: vi.fn(async ({ call }) => ({
+                  ...call,
+                  status: CoreToolCallStatus.Success,
+                  response: {
+                    callId: call.request.callId,
+                    responseParts: [],
+                  } as ToolCallResponseInfo,
+                } as SuccessfulToolCall)),
+              } as unknown as Mocked<ToolExecutor>;
+              vi.mocked(ToolExecutor).mockReturnValue(executor);
+
+              modifier = {
+                applyInlineModify: vi.fn(
+                  async (call: WaitingToolCall, payload) => ({
+                    updatedParams: {
+                      ...call.request.args,
+                      content:
+                        'newContent' in payload ? payload.newContent : undefined,
+                    },
+                  }),
+                ),
+                handleModifyWithEditor: vi.fn(),
+              } as unknown as Mocked<ToolModificationHandler>;
+              vi.mocked(ToolModificationHandler).mockReturnValue(modifier);
+
+              vi.mocked(checkPolicy).mockResolvedValue({
+                decision: PolicyDecision.ASK_USER,
+                rule: undefined,
+              });
+              vi.mocked(updatePolicy).mockResolvedValue(undefined);
+            });
+
+            it('keeps two out-of-order modified approvals with their correlated calls', async () => {
+              const context = {
+                config,
+                messageBus,
+                toolRegistry: {
+                  getTool: vi.fn().mockReturnValue(tool),
+                  getAllToolNames: vi.fn().mockReturnValue(['test-tool']),
+                },
+              } as unknown as AgentLoopContext;
+              const scheduler = new Scheduler({
+                context,
+                messageBus,
+                getPreferredEditor: () => undefined,
+                schedulerId: ROOT_SCHEDULER_ID,
+              });
+              const signal = new AbortController().signal;
+              const requests: ToolCallRequestInfo[] = [
+                {
+                  callId: 'call-1',
+                  name: 'test-tool',
+                  args: { marker: 'one' },
+                  isClientInitiated: false,
+                  prompt_id: 'prompt-1',
+                },
+                {
+                  callId: 'call-2',
+                  name: 'test-tool',
+                  args: { marker: 'two' },
+                  isClientInitiated: false,
+                  prompt_id: 'prompt-1',
+                },
+              ];
+
+              const scheduled = scheduler.schedule(requests, signal);
+
+              await vi.waitFor(() => {
+                const latest = snapshots.at(-1) ?? [];
+                expect(
+                  latest.filter(
+                    (call) =>
+                      call.status === CoreToolCallStatus.AwaitingApproval,
+                  ),
+                ).toHaveLength(2);
+              });
+
+              const waiting = snapshots
+                .at(-1)!
+                .filter(
+                  (call) => call.status === CoreToolCallStatus.AwaitingApproval,
+                );
+              const correlationByCall = new Map(
+                waiting.map((call) => [call.callId, call.correlationId!]),
+              );
+
+              await messageBus.publish({
+                type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+                correlationId: correlationByCall.get('call-2')!,
+                confirmed: true,
+                outcome: ToolConfirmationOutcome.ProceedOnce,
+                payload: { newContent: 'two-updated' },
+              });
+
+              await vi.waitFor(() => {
+                const latest = snapshots.at(-1) ?? [];
+                expect(
+                  latest.find((call) => call.callId === 'call-2')?.args,
+                ).toEqual({ marker: 'two', content: 'two-updated' });
+                expect(
+                  latest.find((call) => call.callId === 'call-1')?.status,
+                ).toBe(CoreToolCallStatus.AwaitingApproval);
+              });
+
+              await messageBus.publish({
+                type: MessageBusType.TOOL_CONFIRMATION_RESPONSE,
+                correlationId: correlationByCall.get('call-1')!,
+                confirmed: true,
+                outcome: ToolConfirmationOutcome.ProceedOnce,
+                payload: { newContent: 'one-updated' },
+              });
+
+              const results = await scheduled;
+
+              expect(
+                modifier.applyInlineModify.mock.calls.map(
+                  ([call]) => call.request.callId,
+                ),
+              ).toEqual(['call-2', 'call-1']);
+              expect(
+                modifier.applyInlineModify.mock.calls.map(
+                  ([call]) => call.request.args,
+                ),
+              ).toEqual([{ marker: 'two' }, { marker: 'one' }]);
+
+              const completedArgs = new Map(
+                results.map((call) => [call.request.callId, call.request.args]),
+              );
+              expect(completedArgs.get('call-1')).toEqual({
+                marker: 'one',
+                content: 'one-updated',
+              });
+              expect(completedArgs.get('call-2')).toEqual({
+                marker: 'two',
+                content: 'two-updated',
+              });
+              expect(executor.execute).toHaveBeenCalledTimes(2);
+              expect(build).toHaveBeenCalledWith({
+                marker: 'one',
+                content: 'one-updated',
+              });
+              expect(build).toHaveBeenCalledWith({
+                marker: 'two',
+                content: 'two-updated',
+              });
+
+              scheduler.dispose();
+            });
+          });
+          EOF
+      - name: Format and create clean source commit
+        run: |
+          set -euo pipefail
+          npx prettier --write \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          git diff --check
+          git fetch --no-tags --depth=1 origin "$BASE_HEAD"
+          git reset --soft "$BASE_HEAD"
+          git reset
+          git config user.name fieldwork-bot
+          git config user.email fieldwork-bot@users.noreply.github.com
+          git add \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          git commit -m 'fix(scheduler): bind confirmation modification to correlated call'
+          rm .github/workflows/fieldwork-confirmation-call-affinity-repair.yml
+          git diff --name-only "$BASE_HEAD"...HEAD | sort > /tmp/actual-files
+          cat > /tmp/expected-files <<'EOF'
+          packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+          packages/core/src/scheduler/confirmation.test.ts
+          packages/core/src/scheduler/confirmation.ts
+          packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          EOF
+          diff -u /tmp/expected-files /tmp/actual-files
+          test "$(git rev-parse HEAD^)" = "$BASE_HEAD"
+          git diff --check "$BASE_HEAD"...HEAD
+      - name: Run affinity and adjacent controls
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.affinity.repair.test.ts \
+            src/scheduler/scheduler.confirmation-affinity.test.ts \
+            src/scheduler/confirmation.test.ts
+      - name: Typecheck core workspace
+        run: npm run typecheck --workspace @google/gemini-cli-core
+      - name: Run project preflight
+        run: npm run preflight
+      - name: Verify clean tracked tree
+        run: git diff --exit-code
+      - name: Publish clean source branch
+        run: |
+          git push --force origin "HEAD:refs/heads/$SOURCE_BRANCH"
+          printf '%s\n' \
+            "source_head=$(git rev-parse HEAD)" \
+            "source_base=$(git rev-parse HEAD^)" \
+            "node=$(node --version)" \
+            "npm=$(npm --version)"
