@@ -16,8 +16,7 @@ concurrency:
 
 env:
   BASE_HEAD: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
-  PRIOR_CANDIDATE_HEAD: b359ece8a2bd059aef870a084ab9494eff16fa8f
-  INTEGRATION_TEST_HEAD: 6804d0b87c196b265c42276f2939573edaf6d89c
+  SOURCE_HEAD: 0c3a86b0555e152b50ca55fd5f8dc53608571cbe
   SOURCE_BRANCH: fix/scheduler-confirmation-call-affinity
 
 jobs:
@@ -27,52 +26,19 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
-          ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          repository: teamleaderleo/gemini-cli
+          ref: 0c3a86b0555e152b50ca55fd5f8dc53608571cbe
+          fetch-depth: 2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
         with:
           node-version: 20.19.0
           cache: npm
-      - name: Install locked dependencies
-        run: npm ci
-      - name: Restore reviewed candidate and integration control
+      - name: Verify immutable source identity and fence
         run: |
           set -euo pipefail
-          git fetch --no-tags --depth=1 origin "$PRIOR_CANDIDATE_HEAD"
-          git fetch --no-tags --depth=1 origin "$INTEGRATION_TEST_HEAD"
-          git checkout "$PRIOR_CANDIDATE_HEAD" -- \
-            packages/core/src/scheduler/confirmation.ts \
-            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
-            packages/core/src/scheduler/confirmation.test.ts
-          git checkout "$INTEGRATION_TEST_HEAD" -- \
-            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
-      - name: Format and create clean source commit
-        run: |
-          set -euo pipefail
-          npx prettier --write \
-            packages/core/src/scheduler/confirmation.ts \
-            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
-            packages/core/src/scheduler/confirmation.test.ts \
-            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
-          npx prettier --check \
-            packages/core/src/scheduler/confirmation.ts \
-            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
-            packages/core/src/scheduler/confirmation.test.ts \
-            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
-          git diff --check
-          git fetch --no-tags --depth=1 origin "$BASE_HEAD"
-          git reset --soft "$BASE_HEAD"
-          git reset
-          git config user.name fieldwork-bot
-          git config user.email fieldwork-bot@users.noreply.github.com
-          git add \
-            packages/core/src/scheduler/confirmation.ts \
-            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
-            packages/core/src/scheduler/confirmation.test.ts \
-            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
-          git commit -m 'fix(scheduler): bind confirmation modification to correlated call'
-          rm .github/workflows/fieldwork-confirmation-call-affinity-repair.yml
-          git diff --name-only "$BASE_HEAD"...HEAD | sort > /tmp/actual-files
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git rev-parse HEAD^)" = "$BASE_HEAD"
+          git diff --name-only "$BASE_HEAD"..."$SOURCE_HEAD" | sort > /tmp/actual-files
           cat > /tmp/expected-files <<'EOF'
           packages/core/src/scheduler/confirmation.affinity.repair.test.ts
           packages/core/src/scheduler/confirmation.test.ts
@@ -80,8 +46,16 @@ jobs:
           packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
           EOF
           diff -u /tmp/expected-files /tmp/actual-files
-          test "$(git rev-parse HEAD^)" = "$BASE_HEAD"
-          git diff --check "$BASE_HEAD"...HEAD
+          git diff --check "$BASE_HEAD"..."$SOURCE_HEAD"
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check source formatting
+        run: |
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
       - name: Run affinity and adjacent controls
         run: |
           npm run test --workspace @google/gemini-cli-core -- \
@@ -94,7 +68,7 @@ jobs:
         run: npm run preflight
       - name: Verify clean tracked tree
         run: git diff --exit-code
-      - name: Publish clean source branch
+      - name: Publish canonical clean source branch
         run: |
           git push --force origin "HEAD:refs/heads/$SOURCE_BRANCH"
           printf '%s\n' \
