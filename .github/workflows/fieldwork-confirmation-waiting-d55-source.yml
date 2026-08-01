@@ -22,7 +22,7 @@ env:
 
 jobs:
   publish-source:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
       - name: Check out exact carrier head
