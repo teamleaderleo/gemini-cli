@@ -1,0 +1,117 @@
+name: Fieldwork unit 05 current-head gate
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/unit-05-background-ownership-current-source
+    paths:
+      - .github/workflows/fieldwork-unit-05-current-head-gate.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-unit-05-current-head-gate
+  cancel-in-progress: true
+
+env:
+  SOURCE_HEAD: f754eafde164420b43df5a58861d874cfb73acde
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify exact source and file fence
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --name-only f47d6c6f7a1308d81f9f57acf7d279f0928c5249..HEAD | sort -u > /tmp/actual-files
+          cat > /tmp/expected-files <<'EOF'
+          packages/core/src/services/executionLifecycleService.backgroundClaim.test.ts
+          packages/core/src/services/executionLifecycleService.ts
+          packages/core/src/services/shell-execution-process-exit-cleanup.test.ts
+          packages/core/src/services/shellExecutionService.ts
+          packages/core/src/tools/shell-background-temp-ownership-repair.test.ts
+          packages/core/src/tools/shell.ts
+          EOF
+          sort -u /tmp/expected-files -o /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --check f47d6c6f7a1308d81f9f57acf7d279f0928c5249..HEAD
+
+      - name: Check formatting
+        run: |
+          npx prettier --check \
+            packages/core/src/services/executionLifecycleService.backgroundClaim.test.ts \
+            packages/core/src/services/executionLifecycleService.ts \
+            packages/core/src/services/shell-execution-process-exit-cleanup.test.ts \
+            packages/core/src/services/shellExecutionService.ts \
+            packages/core/src/tools/shell-background-temp-ownership-repair.test.ts \
+            packages/core/src/tools/shell.ts
+
+      - name: Run focused and adjacent tests
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/services/executionLifecycleService.backgroundClaim.test.ts \
+            src/services/executionLifecycleService.test.ts \
+            src/services/shell-execution-process-exit-cleanup.test.ts \
+            src/services/shellExecutionService.test.ts \
+            src/tools/shell-background-temp-ownership-repair.test.ts \
+            src/tools/shell.test.ts
+
+      - name: Run core build and typecheck
+        run: |
+          npm run build --workspace @google/gemini-cli-core
+          npm run typecheck --workspace @google/gemini-cli-core
+
+      - name: Verify clean tree
+        run: |
+          git diff --check
+          test -z "$(git status --porcelain)"
+          echo "FIELDWORK_UNIT_05_FOCUSED_HEAD=$(git rev-parse HEAD)"
+
+  preflight:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Verify exact source
+        run: test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+
+      - name: Run target preflight
+        run: npm run preflight
+
+      - name: Verify receipt identity
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --check
+          echo "FIELDWORK_UNIT_05_PREFLIGHT_HEAD=$(git rev-parse HEAD)"
