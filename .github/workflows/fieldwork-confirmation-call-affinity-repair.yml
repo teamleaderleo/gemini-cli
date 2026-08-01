@@ -52,26 +52,36 @@ jobs:
       - name: Correct scheduler response fixture
         shell: python
         run: |
+          import re
           from pathlib import Path
 
           test_file = Path(
               'packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts'
           )
           text = test_file.read_text(encoding='utf-8')
-          old = '''            response: {
-              callId: call.request.callId,
-              responseParts: [],
-            } as ToolCallResponseInfo,'''
-          new = '''            response: {
-              callId: call.request.callId,
-              responseParts: [],
-              resultDisplay: undefined,
-              error: undefined,
-              errorType: undefined,
-            } as ToolCallResponseInfo,'''
-          if text.count(old) != 1:
-              raise SystemExit('executor response fixture anchor mismatch')
-          test_file.write_text(text.replace(old, new, 1), encoding='utf-8')
+          pattern = re.compile(
+              r'(responseParts: \[\],\n)([ \t]+)(\} as ToolCallResponseInfo,)'
+          )
+
+          def replacement(match: re.Match[str]) -> str:
+              closing_indent = match.group(2)
+              field_indent = f'{closing_indent}  '
+              return (
+                  match.group(1)
+                  + field_indent
+                  + 'resultDisplay: undefined,\n'
+                  + field_indent
+                  + 'error: undefined,\n'
+                  + field_indent
+                  + 'errorType: undefined,\n'
+                  + closing_indent
+                  + match.group(3)
+              )
+
+          updated, count = pattern.subn(replacement, text, count=1)
+          if count != 1:
+              raise SystemExit(f'executor response fixture match count: {count}')
+          test_file.write_text(updated, encoding='utf-8')
       - name: Normalize formatting and create clean repaired commit
         run: |
           set -euo pipefail
