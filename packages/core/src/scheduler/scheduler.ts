@@ -9,6 +9,7 @@ import type { AgentLoopContext } from '../config/agent-loop-context.js';
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
 import { SchedulerStateManager } from './state-manager.js';
 import { resolveConfirmation } from './confirmation.js';
+import { ConfirmationWaitTracker } from './confirmation-wait-tracker.js';
 import { checkPolicy, updatePolicy, getPolicyDenialError } from './policy.js';
 import { evaluateBeforeToolHook } from './hook-utils.js';
 import { ToolExecutor } from './tool-executor.js';
@@ -109,7 +110,7 @@ export class Scheduler {
   private readonly schedulerId: string;
   private readonly subagent?: string;
   private readonly parentCallId?: string;
-  private readonly onWaitingForConfirmation?: (waiting: boolean) => void;
+  private readonly confirmationWaitTracker: ConfirmationWaitTracker;
 
   private isProcessing = false;
   private isCancelling = false;
@@ -123,7 +124,9 @@ export class Scheduler {
     this.schedulerId = options.schedulerId;
     this.subagent = options.subagent;
     this.parentCallId = options.parentCallId;
-    this.onWaitingForConfirmation = options.onWaitingForConfirmation;
+    this.confirmationWaitTracker = new ConfirmationWaitTracker(
+      options.onWaitingForConfirmation,
+    );
     this.state = new SchedulerStateManager(
       this.messageBus,
       this.schedulerId,
@@ -686,7 +689,7 @@ export class Scheduler {
         modifier: this.modifier,
         getPreferredEditor: this.getPreferredEditor,
         schedulerId: this.schedulerId,
-        onWaitingForConfirmation: this.onWaitingForConfirmation,
+        onWaitingForConfirmation: this.confirmationWaitTracker.update,
         systemMessage: hookSystemMessage,
         forcedDecision: hookDecision === 'ask' ? 'ask_user' : undefined,
       });
@@ -895,7 +898,7 @@ export class Scheduler {
           modifier: this.modifier,
           getPreferredEditor: this.getPreferredEditor,
           schedulerId: this.schedulerId,
-          onWaitingForConfirmation: this.onWaitingForConfirmation,
+          onWaitingForConfirmation: this.confirmationWaitTracker.update,
         });
 
         if (confResult.outcome === ToolConfirmationOutcome.Cancel) {
