@@ -16,7 +16,7 @@ concurrency:
 
 env:
   UPSTREAM_HEAD: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
-  UPSTREAM_BRANCH: fix/scheduler-confirmation-waiting-ownership
+  UPSTREAM_BRANCH: fieldwork/upstream-f47-waiting-ownership-base
   STAGED_BRANCH: fieldwork/confirmation-waiting-state-repair
   SOURCE_BRANCH: fix/scheduler-confirmation-waiting-ownership
 
