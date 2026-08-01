@@ -1,4 +1,4 @@
-name: Fieldwork confirmation waiting ownership d55 source
+name: Fieldwork confirmation waiting ownership current source
 
 on:
   pull_request:
@@ -11,14 +11,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: fieldwork-confirmation-waiting-d55-source
+  group: fieldwork-confirmation-waiting-current-source
   cancel-in-progress: true
 
 env:
-  UPSTREAM_HEAD: d55e366f6ab393e024c613d940fead3696d56eac
-  UPSTREAM_BRANCH: fieldwork/upstream-d55-waiting-ownership-base
+  UPSTREAM_HEAD: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+  UPSTREAM_BRANCH: fix/scheduler-confirmation-waiting-ownership
   STAGED_BRANCH: fieldwork/confirmation-waiting-state-repair
-  SOURCE_BRANCH: fieldwork/confirmation-waiting-d55-source
+  SOURCE_BRANCH: fix/scheduler-confirmation-waiting-ownership
 
 jobs:
   publish-source:
@@ -132,13 +132,13 @@ jobs:
           npx prettier --write "${files[@]}"
           npx prettier --check "${files[@]}"
           git diff --check
-          git diff --name-only "$UPSTREAM_HEAD" | sort > /tmp/actual-files
+          git add "${files[@]}"
+          git diff --cached --name-only | sort > /tmp/actual-files
           printf '%s\n' "${files[@]}" | sort > /tmp/expected-files
           diff -u /tmp/expected-files /tmp/actual-files
           git config user.name fieldwork-bot
           git config user.email fieldwork-bot@users.noreply.github.com
-          git add "${files[@]}"
-          git commit -m 'core: make confirmation waiting ownership call-scoped'
+          git commit -m 'fix(core): balance confirmation waiting ownership'
           test "$(git diff --name-only "$UPSTREAM_HEAD"...HEAD | wc -l)" -eq 6
 
       - name: Run exact behavior and type gates
@@ -151,7 +151,7 @@ jobs:
             src/scheduler/confirmation.test.ts
           npm run typecheck --workspace @google/gemini-cli-core
           git diff --exit-code
-          echo 'FIELDWORK_WAITING_OWNERSHIP_D55=16/16'
+          echo 'FIELDWORK_WAITING_OWNERSHIP_CURRENT=16/16'
 
       - name: Publish source-only exact head
         run: |
