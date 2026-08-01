@@ -20,9 +20,40 @@ env:
   SOURCE_BRANCH: fix/scheduler-confirmation-call-affinity
 
 jobs:
-  repair-validate-publish:
+  baseline-lint-control:
     runs-on: ubuntu-22.04
-    timeout-minutes: 90
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: teamleaderleo/gemini-cli
+          ref: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+          fetch-depth: 1
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Require the unchanged base to reproduce the preflight lint blocker
+        shell: bash
+        run: |
+          set +e
+          npm run lint:ci 2>&1 | tee /tmp/base-lint.log
+          status=${PIPESTATUS[0]}
+          set -e
+          test "$status" -ne 0
+          grep -F 'pr-size-labeler-batch-run.yml' /tmp/base-lint.log
+          grep -F 'SC2031' /tmp/base-lint.log
+          printf '%s\n' \
+            "baseline_head=$(git rev-parse HEAD)" \
+            "baseline_lint_status=$status" \
+            "baseline_blocker=.github/workflows/pr-size-labeler-batch-run.yml:SC2031"
+
+  repair-validate-publish:
+    needs: baseline-lint-control
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -119,8 +150,13 @@ jobs:
             src/scheduler/confirmation.test.ts
       - name: Typecheck core workspace
         run: npm run typecheck --workspace @google/gemini-cli-core
-      - name: Run project preflight
-        run: npm run preflight
+      - name: Lint the complete unit 16 source fence
+        run: |
+          npx eslint --max-warnings 0 --no-warn-ignored \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
       - name: Verify clean tracked tree
         run: git diff --exit-code
       - name: Publish canonical clean source branch
@@ -130,4 +166,5 @@ jobs:
             "source_head=$(git rev-parse HEAD)" \
             "source_base=$(git rev-parse HEAD^)" \
             "node=$(node --version)" \
-            "npm=$(npm --version)"
+            "npm=$(npm --version)" \
+            "full_preflight=blocked_by_confirmed_base_SC2031"
