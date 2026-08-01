@@ -20,8 +20,17 @@ env:
   SOURCE_BRANCH: fix/scheduler-confirmation-call-affinity
 
 jobs:
-  validate-and-publish:
-    runs-on: ubuntu-22.04
+  validate:
+    name: ${{ matrix.mode }} (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15
+            mode: focused
+          - os: ubuntu-22.04
+            mode: preflight
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -34,6 +43,7 @@ jobs:
           node-version: 20.19.0
           cache: npm
       - name: Verify immutable source identity and fence
+        shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
@@ -65,14 +75,18 @@ jobs:
       - name: Typecheck core workspace
         run: npm run typecheck --workspace @google/gemini-cli-core
       - name: Run project preflight
+        if: matrix.mode == 'preflight'
         run: npm run preflight
       - name: Verify clean tracked tree
         run: git diff --exit-code
       - name: Publish canonical clean source branch
+        if: matrix.mode == 'preflight'
+        shell: bash
         run: |
           git push --force origin "HEAD:refs/heads/$SOURCE_BRANCH"
           printf '%s\n' \
             "source_head=$(git rev-parse HEAD)" \
             "source_base=$(git rev-parse HEAD^)" \
+            "os=${{ matrix.os }}" \
             "node=$(node --version)" \
             "npm=$(npm --version)"
