@@ -139,6 +139,10 @@ export interface ShellExecutionConfig {
   backgroundCompletionBehavior?: 'inject' | 'notify' | 'silent';
   originalCommand?: string;
   sessionId?: string;
+  /** Synchronous ownership transfer before a foreground result settles as backgrounded. */
+  onBackgroundClaim?: () => void;
+  /** Best-effort cleanup for resources that remain owned until actual exit. */
+  onProcessExit?: () => void | Promise<void>;
   env?: Record<string, string>;
 }
 
@@ -341,6 +345,16 @@ export class ShellExecutionService {
     }
 
     this.backgroundLogPids.delete(pid);
+  }
+
+  private static async runProcessExitCleanup(
+    shellExecutionConfig: ShellExecutionConfig,
+  ): Promise<void> {
+    try {
+      await shellExecutionConfig.onProcessExit?.();
+    } catch (error) {
+      debugLogger.warn('Shell process-exit cleanup failed:', error);
+    }
   }
 
   /**
@@ -639,6 +653,7 @@ export class ShellExecutionService {
                 output,
                 error ?? undefined,
               ),
+            onBackgroundClaim: shellExecutionConfig.onBackgroundClaim,
             completionBehavior:
               shellExecutionConfig.backgroundCompletionBehavior || 'silent',
           })
@@ -736,6 +751,10 @@ export class ShellExecutionService {
         code: number | null,
         signal: NodeJS.Signals | null,
       ) => {
+        if (exited) {
+          return;
+        }
+
         cleanup();
         cmdCleanup?.();
 
@@ -791,6 +810,9 @@ export class ShellExecutionService {
           });
 
           ExecutionLifecycleService.completeWithResult(pid, resultPayload);
+          void ShellExecutionService.runProcessExitCleanup(
+            shellExecutionConfig,
+          );
         } else {
           resolveWithoutPid?.(resultPayload);
         }
@@ -1040,6 +1062,7 @@ export class ShellExecutionService {
             output,
             error ?? undefined,
           ),
+        onBackgroundClaim: shellExecutionConfig.onBackgroundClaim,
         completionBehavior:
           shellExecutionConfig.backgroundCompletionBehavior || 'silent',
       }).result;
@@ -1297,6 +1320,10 @@ export class ShellExecutionService {
               pid: ptyPid,
               executionMethod: ptyInfo?.name ?? 'node-pty',
             });
+
+            void ShellExecutionService.runProcessExitCleanup(
+              shellExecutionConfig,
+            );
           };
 
           if (abortSignal.aborted) {
@@ -1417,7 +1444,11 @@ export class ShellExecutionService {
    *
    * @param pid The process ID of the target PTY.
    */
-  static background(pid: number, sessionId?: string, command?: string): void {
+  static background(
+    pid: number,
+    sessionId?: string,
+    command?: string,
+  ): boolean {
     const activePty = this.activePtys.get(pid);
     const activeChild = this.activeChildProcesses.get(pid);
 
@@ -1433,20 +1464,18 @@ export class ShellExecutionService {
       throw new Error('Session ID is required for background operations');
     }
 
+    if (!ExecutionLifecycleService.canBackground(pid)) {
+      return false;
+    }
+
     const MAX_BACKGROUND_PROCESS_HISTORY_SIZE = 100;
+    const existingHistory =
+      this.backgroundProcessHistory.get(resolvedSessionId);
+    const historySnapshot = existingHistory
+      ? new Map(existingHistory)
+      : undefined;
     const history =
-      this.backgroundProcessHistory.get(resolvedSessionId) ??
-      new Map<
-        number,
-        {
-          command: string;
-          status: 'running' | 'exited';
-          exitCode?: number | null;
-          signal?: number | null;
-          startTime: number;
-          endTime?: number;
-        }
-      >();
+      existingHistory ?? new Map<number, BackgroundProcessRecord>();
 
     if (history.size >= MAX_BACKGROUND_PROCESS_HISTORY_SIZE) {
       const oldestPid = history.keys().next().value;
@@ -1462,7 +1491,18 @@ export class ShellExecutionService {
     });
     this.backgroundProcessHistory.set(resolvedSessionId, history);
 
-    // Set up background logging
+    if (!ExecutionLifecycleService.background(pid)) {
+      if (historySnapshot) {
+        this.backgroundProcessHistory.set(resolvedSessionId, historySnapshot);
+      } else {
+        this.backgroundProcessHistory.delete(resolvedSessionId);
+      }
+      return false;
+    }
+
+    // The lifecycle claim has settled synchronously. Set up logging before the
+    // foreground promise continuation runs, without leaving rejected-attempt
+    // streams or files that can race an immediate retry.
     const logPath = this.getLogFilePath(pid);
     const logDir = this.getLogDir();
     try {
@@ -1486,8 +1526,7 @@ export class ShellExecutionService {
     }
 
     this.backgroundLogPids.add(pid);
-
-    ExecutionLifecycleService.background(pid);
+    return true;
   }
 
   static subscribe(
