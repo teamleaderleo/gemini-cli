@@ -99,9 +99,11 @@ describe('confirmation.ts', () => {
     let invocationMock: Mocked<AnyToolInvocation>;
     let toolMock: Mocked<AnyDeclarativeTool>;
     let currentToolCall: ValidatingToolCall | WaitingToolCall;
+    let approvalGeneration: number;
 
     beforeEach(() => {
       signal = new AbortController().signal;
+      approvalGeneration = 0;
 
       mockState = {
         getToolCall: vi.fn(),
@@ -166,9 +168,11 @@ describe('confirmation.ts', () => {
             confirmationDetails: WaitingToolCall['confirmationDetails'];
             correlationId: string;
           };
+          approvalGeneration += 1;
           currentToolCall = {
             ...toolCall,
             status,
+            approvalGeneration,
             confirmationDetails: waitingData.confirmationDetails,
             correlationId: waitingData.correlationId,
           } as WaitingToolCall;
