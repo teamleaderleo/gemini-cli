@@ -45,12 +45,12 @@ vi.mock('../utils/editor.js', async () => {
 });
 
 interface Harness {
+  advanceTargetApprovalGeneration: () => void;
   config: Mocked<Config>;
   getToolCall: ReturnType<typeof vi.fn>;
   messageBus: MessageBus;
   modifier: Mocked<ToolModificationHandler>;
   rebuiltInvocation: AnyToolInvocation;
-  replaceTargetWaitingCall: () => void;
   setTargetAvailable: (available: boolean) => void;
   setTargetWaiting: (waiting: boolean) => void;
   state: Mocked<SchedulerStateManager>;
@@ -103,6 +103,7 @@ function makeHarness(
     },
     invocation: {} as AnyToolInvocation,
     tool: {} as AnyDeclarativeTool,
+    approvalGeneration: 1,
     confirmationDetails: {
       type: 'info' as const,
       title: 'Other approval',
@@ -114,6 +115,7 @@ function makeHarness(
   let currentTargetCall: ValidatingToolCall | WaitingToolCall = targetCall;
   let targetAvailable = true;
   let correlationId: string | undefined;
+  let approvalGeneration = 0;
 
   const getToolCall = vi.fn((callId: string) => {
     if (callId === targetCall.request.callId) {
@@ -138,10 +140,12 @@ function makeHarness(
         callId === targetCall.request.callId &&
         status === CoreToolCallStatus.AwaitingApproval
       ) {
+        approvalGeneration += 1;
         correlationId = data?.correlationId;
         currentTargetCall = {
           ...targetCall,
           status: CoreToolCallStatus.AwaitingApproval,
+          approvalGeneration,
           confirmationDetails: data?.confirmationDetails ?? {
             type: 'info',
             title: 'Target approval',
@@ -174,20 +178,18 @@ function makeHarness(
   } as unknown as Mocked<Config>;
 
   return {
+    advanceTargetApprovalGeneration: () => {
+      if (currentTargetCall.status !== CoreToolCallStatus.AwaitingApproval) {
+        throw new Error('target call is not awaiting approval');
+      }
+      approvalGeneration += 1;
+      currentTargetCall.approvalGeneration = approvalGeneration;
+    },
     config,
     getToolCall,
     messageBus,
     modifier,
     rebuiltInvocation,
-    replaceTargetWaitingCall: () => {
-      if (currentTargetCall.status !== CoreToolCallStatus.AwaitingApproval) {
-        throw new Error('target call is not awaiting approval');
-      }
-      currentTargetCall = {
-        ...currentTargetCall,
-        correlationId: `${currentTargetCall.correlationId}-replacement`,
-      };
-    },
     setTargetAvailable: (available) => {
       targetAvailable = available;
     },
@@ -378,7 +380,7 @@ describe('confirmation modification call affinity repair', () => {
     expect(harness.state.updateArgs).not.toHaveBeenCalled();
   });
 
-  it('rejects an inline update when the waiting generation is replaced', async () => {
+  it('rejects an update after the same wrapper enters a new approval generation', async () => {
     const harness = makeHarness([
       {
         type: 'info',
@@ -401,11 +403,11 @@ describe('confirmation modification call affinity repair', () => {
       expect(harness.modifier.applyInlineModify).toHaveBeenCalledTimes(1);
     });
 
-    harness.replaceTargetWaitingCall();
+    harness.advanceTargetApprovalGeneration();
     modification.resolve({ updatedParams: { path: 'stale-generation.txt' } });
 
     await expect(resolution).rejects.toThrow(
-      'Tool call call-b changed during modification',
+      'Tool call call-b entered a new approval generation during modification',
     );
     expect(harness.state.updateArgs).not.toHaveBeenCalled();
   });
