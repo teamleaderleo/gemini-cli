@@ -1452,10 +1452,6 @@ export class ShellExecutionService {
     const activePty = this.activePtys.get(pid);
     const activeChild = this.activeChildProcesses.get(pid);
 
-    if (!ExecutionLifecycleService.canBackground(pid)) {
-      return false;
-    }
-
     const resolvedSessionId =
       sessionId ?? activePty?.sessionId ?? activeChild?.sessionId;
     const resolvedCommand =
@@ -1466,6 +1462,10 @@ export class ShellExecutionService {
 
     if (!resolvedSessionId) {
       throw new Error('Session ID is required for background operations');
+    }
+
+    if (!ExecutionLifecycleService.canBackground(pid)) {
+      return false;
     }
 
     const MAX_BACKGROUND_PROCESS_HISTORY_SIZE = 100;

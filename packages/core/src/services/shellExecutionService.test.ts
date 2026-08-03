@@ -950,8 +950,13 @@ describe('ShellExecutionService', () => {
         command: 'cmd-101',
         sessionId: 'default',
       });
+      ExecutionLifecycleService.attachExecution(101, {
+        executionMethod: 'child_process',
+      });
 
-      ShellExecutionService.background(101, 'default', 'cmd-101');
+      expect(ShellExecutionService.background(101, 'default', 'cmd-101')).toBe(
+        true,
+      );
 
       const processes =
         ShellExecutionService.listBackgroundProcesses('default');
