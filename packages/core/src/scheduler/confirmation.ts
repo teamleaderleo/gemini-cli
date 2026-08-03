@@ -102,6 +102,48 @@ async function awaitConfirmation(
   throw new Error('Operation cancelled');
 }
 
+async function waitForConfirmationWithState(
+  messageBus: MessageBus,
+  correlationId: string,
+  signal: AbortSignal,
+  ideConfirmation: Promise<DiffUpdateResult> | undefined,
+  onWaitingForConfirmation: ((waiting: boolean) => void) | undefined,
+): Promise<ConfirmationResult> {
+  onWaitingForConfirmation?.(true);
+
+  let response: ConfirmationResult | undefined;
+  let waitError: unknown;
+  let waitFailed = false;
+  try {
+    response = await waitForConfirmation(
+      messageBus,
+      correlationId,
+      signal,
+      ideConfirmation,
+    );
+  } catch (error) {
+    waitFailed = true;
+    waitError = error;
+  }
+
+  try {
+    onWaitingForConfirmation?.(false);
+  } catch (cleanupError) {
+    if (!waitFailed) {
+      throw cleanupError;
+    }
+    debugLogger.warn(
+      'Failed to clear confirmation waiting state after wait failure',
+      cleanupError,
+    );
+  }
+
+  if (waitFailed) {
+    throw waitError;
+  }
+  return response!;
+}
+
 /**
  * Manages the interactive confirmation loop, handling user modifications
  * via inline diffs or external editors (Vim).
@@ -164,14 +206,13 @@ export async function resolveConfirmation(
       correlationId,
     });
 
-    onWaitingForConfirmation?.(true);
-    const response = await waitForConfirmation(
+    const response = await waitForConfirmationWithState(
       deps.messageBus,
       correlationId,
       signal,
       ideConfirmation,
+      onWaitingForConfirmation,
     );
-    onWaitingForConfirmation?.(false);
     outcome = response.outcome;
 
     if ('onConfirm' in details && typeof details.onConfirm === 'function') {
