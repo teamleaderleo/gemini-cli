@@ -41,4 +41,23 @@ describe('ConfirmationWaitTracker', () => {
     expect(() => tracker.update(true)).toThrow('observer start failed');
     expect(() => tracker.update(false)).toThrow('without an active wait');
   });
+
+  it('releases the final wait before propagating a clear observer error', () => {
+    const onWaitingChange = vi.fn((waiting: boolean) => {
+      if (!waiting) {
+        throw new Error('observer clear failed');
+      }
+    });
+    const tracker = new ConfirmationWaitTracker(onWaitingChange);
+
+    tracker.update(true);
+    expect(() => tracker.update(false)).toThrow('observer clear failed');
+
+    tracker.update(true);
+    expect(onWaitingChange.mock.calls.map(([waiting]) => waiting)).toEqual([
+      true,
+      false,
+      true,
+    ]);
+  });
 });
