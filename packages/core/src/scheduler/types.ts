@@ -167,6 +167,15 @@ export type WaitingToolCall = {
   tool: AnyDeclarativeTool;
   invocation: AnyToolInvocation;
   /**
+   * Monotonic identity for this call's current approval wait. The state manager
+   * increments it every time the call enters AwaitingApproval, including an
+   * away-and-back transition on the same call ID.
+   *
+   * Optional only for legacy/test-created call objects that did not pass through
+   * SchedulerStateManager. Production waiting transitions always set it.
+   */
+  approvalGeneration?: number;
+  /**
    * Supports both legacy (with callbacks) and new (serializable) details.
    * New code should treat this as SerializableConfirmationDetails.
    *
