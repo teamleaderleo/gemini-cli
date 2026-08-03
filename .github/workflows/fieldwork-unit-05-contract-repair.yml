@@ -1,0 +1,107 @@
+name: Fieldwork unit 05 contract repair
+
+on:
+  pull_request:
+    branches:
+      - fieldwork/unit-05-background-ownership-current-source
+    paths:
+      - .github/workflows/fieldwork-unit-05-contract-repair.yml
+      - tools/fieldwork/apply_unit05_contract_repair.py
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fieldwork-unit-05-contract-repair
+  cancel-in-progress: true
+
+env:
+  SOURCE_HEAD: f754eafde164420b43df5a58861d874cfb73acde
+  SOURCE_BRANCH: fieldwork/unit-05-background-ownership-current-source
+
+jobs:
+  repair-and-publish:
+    if: >-
+      github.repository == 'teamleaderleo/gemini-cli' &&
+      github.head_ref == 'fieldwork/unit-05-contract-repair-executor'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify exact repair input
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          test "$(git diff --name-only f47d6c6f7a1308d81f9f57acf7d279f0928c5249..HEAD | sort)" = $'packages/core/src/services/executionLifecycleService.backgroundClaim.test.ts\npackages/core/src/services/executionLifecycleService.ts\npackages/core/src/services/shell-execution-process-exit-cleanup.test.ts\npackages/core/src/services/shellExecutionService.ts\npackages/core/src/tools/shell-background-temp-ownership-repair.test.ts\npackages/core/src/tools/shell.ts'
+          test -z "$(git status --porcelain)"
+
+      - name: Apply session and lifecycle compatibility repair
+        env:
+          EXECUTION_SHA: ${{ github.event.pull_request.head.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show "$EXECUTION_SHA:tools/fieldwork/apply_unit05_contract_repair.py" > "${{ runner.temp }}/apply_unit05_contract_repair.py"
+          python "${{ runner.temp }}/apply_unit05_contract_repair.py" | tee "${{ runner.temp }}/repair-marker.txt"
+          grep -F 'FIELDWORK_UNIT_05_CONTRACT_REPAIR=session-first-and-owned-eviction' "${{ runner.temp }}/repair-marker.txt"
+
+      - name: Format repaired files
+        run: >-
+          npx prettier --write
+          packages/core/src/services/shellExecutionService.ts
+          packages/core/src/services/shellExecutionService.test.ts
+
+      - name: Run focused and adjacent lifecycle tests
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/services/executionLifecycleService.backgroundClaim.test.ts \
+            src/services/executionLifecycleService.test.ts \
+            src/services/shell-execution-process-exit-cleanup.test.ts \
+            src/services/shellExecutionService.test.ts \
+            src/tools/shell-background-temp-ownership-repair.test.ts \
+            src/tools/shell.test.ts
+
+      - name: Run core build and typecheck
+        run: |
+          npm run build --workspace @google/gemini-cli-core
+          npm run typecheck --workspace @google/gemini-cli-core
+
+      - name: Verify exact output fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prettier --check \
+            packages/core/src/services/shellExecutionService.ts \
+            packages/core/src/services/shellExecutionService.test.ts
+          git diff --check
+          test "$(git diff --name-only | sort)" = $'packages/core/src/services/shellExecutionService.test.ts\npackages/core/src/services/shellExecutionService.ts'
+
+      - name: Publish repaired canonical source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch origin "$SOURCE_BRANCH"
+          test "$(git rev-parse FETCH_HEAD)" = "$SOURCE_HEAD"
+          git config user.name fieldwork-repair-bot
+          git config user.email fieldwork-repair-bot@users.noreply.github.com
+          git add \
+            packages/core/src/services/shellExecutionService.ts \
+            packages/core/src/services/shellExecutionService.test.ts
+          test "$(git diff --cached --name-only | sort)" = $'packages/core/src/services/shellExecutionService.test.ts\npackages/core/src/services/shellExecutionService.ts'
+          git commit -m "fix(core): preserve shell background compatibility contracts"
+          git push origin HEAD:"$SOURCE_BRANCH"
