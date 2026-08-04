@@ -1,0 +1,102 @@
+name: Fieldwork unit 16 confirmation affinity
+
+on:
+  pull_request:
+    branches:
+      - fix/scheduler-confirmation-call-affinity
+    paths:
+      - .github/workflows/fieldwork-unit-16-confirmation-affinity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-unit-16-confirmation-affinity
+  cancel-in-progress: true
+
+env:
+  SOURCE_BASE: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+  SOURCE_HEAD: a328db4f425b39c197bb1a268d62133a8a4cc684
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify exact source and seven-file fence
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --name-only "$SOURCE_BASE"..HEAD | sort -u > /tmp/actual-files
+          cat > /tmp/expected-files <<'EOF'
+          packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+          packages/core/src/scheduler/confirmation.test.ts
+          packages/core/src/scheduler/confirmation.ts
+          packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          packages/core/src/scheduler/state-manager.approval-generation.test.ts
+          packages/core/src/scheduler/state-manager.ts
+          packages/core/src/scheduler/types.ts
+          EOF
+          sort -u /tmp/expected-files -o /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --check "$SOURCE_BASE"..HEAD
+
+      - name: Check formatting
+        run: |
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+
+      - name: Check lint
+        run: |
+          npx eslint --max-warnings 0 \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+
+      - name: Run focused and adjacent scheduler tests
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.affinity.repair.test.ts \
+            src/scheduler/confirmation.test.ts \
+            src/scheduler/scheduler.confirmation-affinity.test.ts \
+            src/scheduler/state-manager.approval-generation.test.ts \
+            src/scheduler/state-manager.test.ts
+
+      - name: Run core build and typecheck
+        run: |
+          npm run build --workspace @google/gemini-cli-core
+          npm run typecheck --workspace @google/gemini-cli-core
+
+      - name: Verify clean receipt
+        run: |
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --check
+          test -z "$(git status --porcelain)"
+          echo "FIELDWORK_UNIT_16_SOURCE_HEAD=$(git rev-parse HEAD)"
