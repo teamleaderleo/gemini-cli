@@ -1,0 +1,115 @@
+name: Fieldwork unit 17 confirmation waiting ownership
+
+on:
+  pull_request:
+    branches:
+      - fix/scheduler-confirmation-waiting-ownership
+    paths:
+      - .github/workflows/fieldwork-unit-17-waiting-ownership.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fieldwork-unit-17-waiting-ownership
+  cancel-in-progress: true
+
+env:
+  SOURCE_BASE: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+  SOURCE_HEAD: ba3998ad5647bcb8bba2a69d2b26a857fd236c9a
+
+jobs:
+  focused:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out exact source head
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          ref: ${{ env.SOURCE_HEAD }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Verify exact source and five-file fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          expected=$(printf '%s\n' \
+            packages/core/src/scheduler/confirmation-wait-tracker.test.ts \
+            packages/core/src/scheduler/confirmation-wait-tracker.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts \
+            packages/core/src/scheduler/scheduler.ts | sort)
+          actual=$(git diff --name-only "$SOURCE_BASE..HEAD" | sort)
+          test "$actual" = "$expected"
+          git diff --check "$SOURCE_BASE..HEAD"
+          mkdir -p receipt
+          git diff --binary "$SOURCE_BASE..HEAD" > receipt/source.diff
+          {
+            echo "source_head=$SOURCE_HEAD"
+            echo "source_base=$SOURCE_BASE"
+            echo "node=$(node --version)"
+            echo "npm=$(npm --version)"
+          } > receipt/identity.txt
+
+      - name: Check formatting and lint
+        shell: bash
+        run: |
+          set -euo pipefail
+          files=(
+            packages/core/src/scheduler/confirmation-wait-tracker.test.ts
+            packages/core/src/scheduler/confirmation-wait-tracker.ts
+            packages/core/src/scheduler/confirmation.ts
+            packages/core/src/scheduler/confirmation.waiting-state.repair.test.ts
+            packages/core/src/scheduler/scheduler.ts
+          )
+          npx prettier --check "${files[@]}" 2>&1 | tee receipt/format.log
+          npx eslint --max-warnings 0 "${files[@]}" 2>&1 | tee receipt/lint.log
+
+      - name: Run focused and adjacent scheduler tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation-wait-tracker.test.ts \
+            src/scheduler/confirmation.waiting-state.repair.test.ts \
+            src/scheduler/confirmation.test.ts \
+            src/scheduler/scheduler.test.ts \
+            2>&1 | tee receipt/tests.log
+
+      - name: Run core build and typecheck
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build --workspace @google/gemini-cli-core \
+            2>&1 | tee receipt/build.log
+          npm run typecheck --workspace @google/gemini-cli-core \
+            2>&1 | tee receipt/typecheck.log
+
+      - name: Verify clean source receipt
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --exit-code
+          git status --porcelain=v1 > receipt/status.txt
+          test ! -s receipt/status.txt
+
+      - name: Upload exact receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-unit-17-waiting-ownership
+          path: receipt/
+          if-no-files-found: warn
+          retention-days: 30
