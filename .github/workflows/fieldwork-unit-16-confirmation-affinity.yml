@@ -6,6 +6,7 @@ on:
       - fix/scheduler-confirmation-call-affinity
     paths:
       - .github/workflows/fieldwork-unit-16-confirmation-affinity.yml
+      - .github/fieldwork/materialize-confirmation-generation-cleanup.py
   workflow_dispatch:
 
 permissions:
@@ -58,6 +59,9 @@ jobs:
           diff -u /tmp/expected-files /tmp/actual-files
           git diff --check "$SOURCE_BASE"..HEAD
 
+      - name: Materialize generation lifetime cleanup
+        run: python3 .github/fieldwork/materialize-confirmation-generation-cleanup.py
+
       - name: Format source fence for execution
         run: |
           npx prettier --write \
@@ -68,8 +72,12 @@ jobs:
             packages/core/src/scheduler/state-manager.approval-generation.test.ts \
             packages/core/src/scheduler/state-manager.ts \
             packages/core/src/scheduler/types.ts
-          test "$(git diff --name-only | sort)" = \
-            "packages/core/src/scheduler/state-manager.approval-generation.test.ts"
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts
+            packages/core/src/scheduler/state-manager.ts
+          )
+          test "${changed[*]}" = "${expected[*]}"
 
       - name: Check formatting
         run: |
@@ -107,7 +115,7 @@ jobs:
           npm run build --workspace @google/gemini-cli-core
           npm run typecheck --workspace @google/gemini-cli-core
 
-      - name: Verify formatted receipt
+      - name: Verify repaired receipt
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
           git diff --check
@@ -119,6 +127,10 @@ jobs:
             packages/core/src/scheduler/state-manager.approval-generation.test.ts \
             packages/core/src/scheduler/state-manager.ts \
             packages/core/src/scheduler/types.ts
-          test "$(git diff --name-only | sort)" = \
-            "packages/core/src/scheduler/state-manager.approval-generation.test.ts"
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts
+            packages/core/src/scheduler/state-manager.ts
+          )
+          test "${changed[*]}" = "${expected[*]}"
           echo "FIELDWORK_UNIT_16_SOURCE_HEAD=$(git rev-parse HEAD)"
