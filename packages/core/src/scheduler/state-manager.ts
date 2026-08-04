@@ -160,6 +160,7 @@ export class SchedulerStateManager {
     if (this.isTerminalCall(call)) {
       this._completedBatch.push(call);
       this.activeCalls.delete(callId);
+      this.approvalGenerations.delete(callId);
 
       this.onTerminalCall?.(call);
       this.emitUpdate();
@@ -205,6 +206,7 @@ export class SchedulerStateManager {
   replaceActiveCallWithTailCall(callId: string, nextCall: ToolCall): void {
     if (this.activeCalls.has(callId)) {
       this.activeCalls.delete(callId);
+      this.approvalGenerations.delete(callId);
       this.queue.unshift(nextCall);
       this.emitUpdate();
     }

@@ -7,15 +7,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import type { MessageBus } from '../confirmation-bus/message-bus.js';
-import type {
-  AnyDeclarativeTool,
-  AnyToolInvocation,
-} from '../tools/tools.js';
+import type { AnyDeclarativeTool, AnyToolInvocation } from '../tools/tools.js';
 import { SchedulerStateManager } from './state-manager.js';
-import {
-  CoreToolCallStatus,
-  type ValidatingToolCall,
-} from './types.js';
+import { CoreToolCallStatus, type ValidatingToolCall } from './types.js';
 
 function makeValidatingCall(): ValidatingToolCall {
   return {
@@ -43,14 +37,18 @@ describe('SchedulerStateManager approval generations', () => {
     state.enqueue([call]);
     state.dequeue();
 
-    state.updateStatus(call.request.callId, CoreToolCallStatus.AwaitingApproval, {
-      correlationId: 'approval-1',
-      confirmationDetails: {
-        type: 'info',
-        title: 'First approval',
-        prompt: 'Approve first generation?',
+    state.updateStatus(
+      call.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-1',
+        confirmationDetails: {
+          type: 'info',
+          title: 'First approval',
+          prompt: 'Approve first generation?',
+        },
       },
-    });
+    );
     const firstWaiting = state.getToolCall(call.request.callId);
     expect(firstWaiting).toMatchObject({
       status: CoreToolCallStatus.AwaitingApproval,
@@ -58,18 +56,116 @@ describe('SchedulerStateManager approval generations', () => {
     });
 
     state.updateStatus(call.request.callId, CoreToolCallStatus.Validating);
-    state.updateStatus(call.request.callId, CoreToolCallStatus.AwaitingApproval, {
-      correlationId: 'approval-2',
-      confirmationDetails: {
-        type: 'info',
-        title: 'Second approval',
-        prompt: 'Approve second generation?',
+    state.updateStatus(
+      call.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-2',
+        confirmationDetails: {
+          type: 'info',
+          title: 'Second approval',
+          prompt: 'Approve second generation?',
+        },
       },
-    });
+    );
     const secondWaiting = state.getToolCall(call.request.callId);
     expect(secondWaiting).toMatchObject({
       status: CoreToolCallStatus.AwaitingApproval,
       approvalGeneration: 2,
+    });
+  });
+
+  it('releases generation state when a call is finalized', () => {
+    const messageBus = {
+      publish: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MessageBus;
+    const state = new SchedulerStateManager(messageBus);
+    const firstCall = makeValidatingCall();
+
+    state.enqueue([firstCall]);
+    state.dequeue();
+    state.updateStatus(
+      firstCall.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-1',
+        confirmationDetails: {
+          type: 'info',
+          title: 'First approval',
+          prompt: 'Approve first lifetime?',
+        },
+      },
+    );
+    state.updateStatus(
+      firstCall.request.callId,
+      CoreToolCallStatus.Cancelled,
+      'finished',
+    );
+    state.finalizeCall(firstCall.request.callId);
+
+    const reusedCall = makeValidatingCall();
+    state.enqueue([reusedCall]);
+    state.dequeue();
+    state.updateStatus(
+      reusedCall.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-reused',
+        confirmationDetails: {
+          type: 'info',
+          title: 'Reused approval',
+          prompt: 'Approve reused call ID?',
+        },
+      },
+    );
+
+    expect(state.getToolCall(reusedCall.request.callId)).toMatchObject({
+      status: CoreToolCallStatus.AwaitingApproval,
+      approvalGeneration: 1,
+    });
+  });
+
+  it('releases generation state when ownership transfers to a tail call', () => {
+    const messageBus = {
+      publish: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MessageBus;
+    const state = new SchedulerStateManager(messageBus);
+    const firstCall = makeValidatingCall();
+
+    state.enqueue([firstCall]);
+    state.dequeue();
+    state.updateStatus(
+      firstCall.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-1',
+        confirmationDetails: {
+          type: 'info',
+          title: 'First approval',
+          prompt: 'Approve first owner?',
+        },
+      },
+    );
+
+    const tailCall = makeValidatingCall();
+    state.replaceActiveCallWithTailCall(firstCall.request.callId, tailCall);
+    state.dequeue();
+    state.updateStatus(
+      tailCall.request.callId,
+      CoreToolCallStatus.AwaitingApproval,
+      {
+        correlationId: 'approval-tail',
+        confirmationDetails: {
+          type: 'info',
+          title: 'Tail approval',
+          prompt: 'Approve replacement owner?',
+        },
+      },
+    );
+
+    expect(state.getToolCall(tailCall.request.callId)).toMatchObject({
+      status: CoreToolCallStatus.AwaitingApproval,
+      approvalGeneration: 1,
     });
   });
 });
