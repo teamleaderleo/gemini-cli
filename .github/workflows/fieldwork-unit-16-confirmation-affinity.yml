@@ -19,6 +19,7 @@ concurrency:
 env:
   SOURCE_BASE: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
   SOURCE_HEAD: a328db4f425b39c197bb1a268d62133a8a4cc684
+  MATERIALIZER_REF: origin/fieldwork/unit-16-confirmation-affinity-executor
 
 jobs:
   focused:
@@ -60,7 +61,10 @@ jobs:
           git diff --check "$SOURCE_BASE"..HEAD
 
       - name: Materialize generation lifetime cleanup
-        run: python3 .github/fieldwork/materialize-confirmation-generation-cleanup.py
+        run: |
+          git show \
+            "$MATERIALIZER_REF:.github/fieldwork/materialize-confirmation-generation-cleanup.py" \
+            | python3 -
 
       - name: Format source fence for execution
         run: |
