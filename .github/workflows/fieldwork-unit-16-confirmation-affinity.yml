@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: fieldwork-unit-16-confirmation-affinity
@@ -19,6 +19,7 @@ concurrency:
 env:
   SOURCE_BASE: f47d6c6f7a1308d81f9f57acf7d279f0928c5249
   SOURCE_HEAD: a328db4f425b39c197bb1a268d62133a8a4cc684
+  SOURCE_BRANCH: fix/scheduler-confirmation-call-affinity
   MATERIALIZER_REF: origin/fieldwork/unit-16-confirmation-affinity-executor
 
 jobs:
@@ -31,7 +32,7 @@ jobs:
         with:
           ref: ${{ env.SOURCE_HEAD }}
           fetch-depth: 0
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Use Node.js 20.19.0
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
@@ -119,8 +120,9 @@ jobs:
           npm run build --workspace @google/gemini-cli-core
           npm run typecheck --workspace @google/gemini-cli-core
 
-      - name: Verify repaired receipt
+      - name: Verify and record repaired receipt
         run: |
+          set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
           git diff --check
           npx prettier --check \
@@ -137,4 +139,36 @@ jobs:
             packages/core/src/scheduler/state-manager.ts
           )
           test "${changed[*]}" = "${expected[*]}"
-          echo "FIELDWORK_UNIT_16_SOURCE_HEAD=$(git rev-parse HEAD)"
+          mkdir -p receipt
+          git diff --binary > receipt/lifetime-cleanup.diff
+          {
+            echo "source_head=$SOURCE_HEAD"
+            echo "source_base=$SOURCE_BASE"
+            echo "source_branch=$SOURCE_BRANCH"
+            echo "carrier_head=$(git rev-parse "$MATERIALIZER_REF")"
+            echo "changed_files=${changed[*]}"
+            echo "node=$(node --version)"
+            echo "npm=$(npm --version)"
+          } > receipt/identity.txt
+
+      - name: Commit and publish exact validated source
+        run: |
+          set -euo pipefail
+          git config user.name 'Fieldwork Agent'
+          git config user.email 'fieldwork-agent@users.noreply.github.com'
+          git add \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts
+          git commit -m 'fix(core): release confirmation approval generations'
+          git push \
+            --force-with-lease="refs/heads/$SOURCE_BRANCH:$SOURCE_HEAD" \
+            origin "HEAD:refs/heads/$SOURCE_BRANCH"
+
+      - name: Upload exact receipt
+        if: always()
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
+        with:
+          name: fieldwork-unit-16-confirmation-affinity
+          path: receipt/
+          if-no-files-found: warn
+          retention-days: 30
