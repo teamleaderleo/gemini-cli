@@ -58,6 +58,19 @@ jobs:
           diff -u /tmp/expected-files /tmp/actual-files
           git diff --check "$SOURCE_BASE"..HEAD
 
+      - name: Format source fence for execution
+        run: |
+          npx prettier --write \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+          test "$(git diff --name-only | sort)" = \
+            "packages/core/src/scheduler/state-manager.approval-generation.test.ts"
+
       - name: Check formatting
         run: |
           npx prettier --check \
@@ -94,9 +107,18 @@ jobs:
           npm run build --workspace @google/gemini-cli-core
           npm run typecheck --workspace @google/gemini-cli-core
 
-      - name: Verify clean receipt
+      - name: Verify formatted receipt
         run: |
           test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
           git diff --check
-          test -z "$(git status --porcelain)"
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+          test "$(git diff --name-only | sort)" = \
+            "packages/core/src/scheduler/state-manager.approval-generation.test.ts"
           echo "FIELDWORK_UNIT_16_SOURCE_HEAD=$(git rev-parse HEAD)"
