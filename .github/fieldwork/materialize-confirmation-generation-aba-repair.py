@@ -3,18 +3,10 @@ from pathlib import Path
 state_path = Path("packages/core/src/scheduler/state-manager.ts")
 state = state_path.read_text(encoding="utf-8")
 
-replacements = [
+single_replacements = [
     (
         "  private readonly approvalGenerations = new Map<string, number>();\n",
         "  private nextApprovalGeneration = 0;\n",
-    ),
-    (
-        "      this.activeCalls.delete(callId);\n      this.approvalGenerations.delete(callId);\n",
-        "      this.activeCalls.delete(callId);\n",
-    ),
-    (
-        "      this.activeCalls.delete(callId);\n      this.approvalGenerations.delete(callId);\n      this.queue.unshift(nextCall);\n",
-        "      this.activeCalls.delete(callId);\n      this.queue.unshift(nextCall);\n",
     ),
     (
         "    const approvalGeneration =\n      (this.approvalGenerations.get(call.request.callId) ?? 0) + 1;\n    this.approvalGenerations.set(call.request.callId, approvalGeneration);\n",
@@ -22,11 +14,21 @@ replacements = [
     ),
 ]
 
-for old, new in replacements:
+for old, new in single_replacements:
     count = state.count(old)
     if count != 1:
         raise SystemExit(f"expected one state-manager match, found {count}: {old!r}")
     state = state.replace(old, new, 1)
+
+# Finalization and tail transfer each discard the old per-call counter. The
+# scheduler-wide sequence needs neither deletion, so remove both exact lines.
+delete_line = "      this.approvalGenerations.delete(callId);\n"
+delete_count = state.count(delete_line)
+if delete_count != 2:
+    raise SystemExit(
+        f"expected two approval-generation cleanup lines, found {delete_count}"
+    )
+state = state.replace(delete_line, "")
 
 state_path.write_text(state, encoding="utf-8")
 
