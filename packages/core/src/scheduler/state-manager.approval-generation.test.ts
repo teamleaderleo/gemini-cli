@@ -75,7 +75,7 @@ describe('SchedulerStateManager approval generations', () => {
     });
   });
 
-  it('releases generation state when a call is finalized', () => {
+  it('does not reuse a generation after a call is finalized', () => {
     const messageBus = {
       publish: vi.fn().mockResolvedValue(undefined),
     } as unknown as MessageBus;
@@ -121,11 +121,11 @@ describe('SchedulerStateManager approval generations', () => {
 
     expect(state.getToolCall(reusedCall.request.callId)).toMatchObject({
       status: CoreToolCallStatus.AwaitingApproval,
-      approvalGeneration: 1,
+      approvalGeneration: 2,
     });
   });
 
-  it('releases generation state when ownership transfers to a tail call', () => {
+  it('does not reuse a generation when ownership transfers to a tail call', () => {
     const messageBus = {
       publish: vi.fn().mockResolvedValue(undefined),
     } as unknown as MessageBus;
@@ -165,7 +165,7 @@ describe('SchedulerStateManager approval generations', () => {
 
     expect(state.getToolCall(tailCall.request.callId)).toMatchObject({
       status: CoreToolCallStatus.AwaitingApproval,
-      approvalGeneration: 1,
+      approvalGeneration: 2,
     });
   });
 });

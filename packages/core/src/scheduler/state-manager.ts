@@ -46,7 +46,7 @@ export type TerminalCallHandler = (call: CompletedToolCall) => void;
  */
 export class SchedulerStateManager {
   private readonly activeCalls = new Map<string, ToolCall>();
-  private readonly approvalGenerations = new Map<string, number>();
+  private nextApprovalGeneration = 0;
   private readonly queue: ToolCall[] = [];
   private _completedBatch: CompletedToolCall[] = [];
 
@@ -160,7 +160,6 @@ export class SchedulerStateManager {
     if (this.isTerminalCall(call)) {
       this._completedBatch.push(call);
       this.activeCalls.delete(callId);
-      this.approvalGenerations.delete(callId);
 
       this.onTerminalCall?.(call);
       this.emitUpdate();
@@ -206,7 +205,6 @@ export class SchedulerStateManager {
   replaceActiveCallWithTailCall(callId: string, nextCall: ToolCall): void {
     if (this.activeCalls.has(callId)) {
       this.activeCalls.delete(callId);
-      this.approvalGenerations.delete(callId);
       this.queue.unshift(nextCall);
       this.emitUpdate();
     }
@@ -403,9 +401,7 @@ export class SchedulerStateManager {
       CoreToolCallStatus.AwaitingApproval,
     );
 
-    const approvalGeneration =
-      (this.approvalGenerations.get(call.request.callId) ?? 0) + 1;
-    this.approvalGenerations.set(call.request.callId, approvalGeneration);
+    const approvalGeneration = ++this.nextApprovalGeneration;
 
     let confirmationDetails:
       | ToolCallConfirmationDetails
