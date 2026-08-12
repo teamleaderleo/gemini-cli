@@ -1,7 +1,9 @@
 name: Fieldwork unit 16 confirmation pre-capture repair
 
 on:
-  pull_request:
+  push:
+    branches:
+      - fieldwork/unit-16-confirmation-precapture-executor
 
 permissions:
   contents: write
