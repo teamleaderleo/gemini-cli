@@ -29,6 +29,7 @@ import {
 import type { SchedulerStateManager } from './state-manager.js';
 import type { ToolModificationHandler } from './tool-modifier.js';
 import {
+  CoreToolCallStatus,
   ROOT_SCHEDULER_ID,
   type ValidatingToolCall,
   type WaitingToolCall,
@@ -97,9 +98,12 @@ describe('confirmation.ts', () => {
     let toolCall: ValidatingToolCall;
     let invocationMock: Mocked<AnyToolInvocation>;
     let toolMock: Mocked<AnyDeclarativeTool>;
+    let currentToolCall: ValidatingToolCall | WaitingToolCall;
+    let approvalGeneration: number;
 
     beforeEach(() => {
       signal = new AbortController().signal;
+      approvalGeneration = 0;
 
       mockState = {
         getToolCall: vi.fn(),
@@ -148,8 +152,32 @@ describe('confirmation.ts', () => {
         tool: toolMock,
       } as ValidatingToolCall;
 
-      // Default: state returns the current call
-      mockState.getToolCall.mockReturnValue(toolCall);
+      currentToolCall = toolCall;
+      mockState.getToolCall.mockImplementation((callId) =>
+        callId === currentToolCall.request.callId ? currentToolCall : undefined,
+      );
+      (mockState.updateStatus as unknown as Mock).mockImplementation(
+        (callId, status, auxiliaryData) => {
+          if (
+            callId !== toolCall.request.callId ||
+            status !== CoreToolCallStatus.AwaitingApproval
+          ) {
+            return;
+          }
+          const waitingData = auxiliaryData as {
+            confirmationDetails: WaitingToolCall['confirmationDetails'];
+            correlationId: string;
+          };
+          approvalGeneration += 1;
+          currentToolCall = {
+            ...toolCall,
+            status,
+            approvalGeneration,
+            confirmationDetails: waitingData.confirmationDetails,
+            correlationId: waitingData.correlationId,
+          } as WaitingToolCall;
+        },
+      );
       // Default: define firstActiveCall for modifiers
       vi.spyOn(mockState, 'firstActiveCall', 'get').mockReturnValue(
         toolCall as unknown as WaitingToolCall,

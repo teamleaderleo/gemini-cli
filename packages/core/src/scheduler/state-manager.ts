@@ -46,6 +46,7 @@ export type TerminalCallHandler = (call: CompletedToolCall) => void;
  */
 export class SchedulerStateManager {
   private readonly activeCalls = new Map<string, ToolCall>();
+  private nextApprovalGeneration = 0;
   private readonly queue: ToolCall[] = [];
   private _completedBatch: CompletedToolCall[] = [];
 
@@ -400,6 +401,8 @@ export class SchedulerStateManager {
       CoreToolCallStatus.AwaitingApproval,
     );
 
+    const approvalGeneration = ++this.nextApprovalGeneration;
+
     let confirmationDetails:
       | ToolCallConfirmationDetails
       | SerializableConfirmationDetails;
@@ -418,6 +421,7 @@ export class SchedulerStateManager {
       request: call.request,
       tool: call.tool,
       status: CoreToolCallStatus.AwaitingApproval,
+      approvalGeneration,
       correlationId,
       confirmationDetails,
       startTime: 'startTime' in call ? call.startTime : undefined,

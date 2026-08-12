@@ -163,6 +163,10 @@ export async function resolveConfirmation(
       confirmationDetails: serializableDetails,
       correlationId,
     });
+    const approvalGeneration = getWaitingCallForModification(
+      state,
+      callId,
+    ).approvalGeneration;
 
     onWaitingForConfirmation?.(true);
     const response = await waitForConfirmation(
@@ -182,6 +186,7 @@ export async function resolveConfirmation(
       const modResult = await handleExternalModification(
         deps,
         toolCall,
+        approvalGeneration,
         signal,
       );
       // Editor is not available - emit error feedback and stay in the loop
@@ -190,7 +195,13 @@ export async function resolveConfirmation(
         coreEvents.emitFeedback('error', modResult.error);
       }
     } else if (response.payload && 'newContent' in response.payload) {
-      await handleInlineModification(deps, toolCall, response.payload, signal);
+      await handleInlineModification(
+        deps,
+        toolCall,
+        response.payload,
+        approvalGeneration,
+        signal,
+      );
       outcome = ToolConfirmationOutcome.ProceedOnce;
     }
   }
@@ -224,6 +235,42 @@ interface ExternalModificationResult {
   error?: string;
 }
 
+interface WaitingModificationTarget {
+  call: WaitingToolCall;
+  approvalGeneration: number;
+}
+
+function getWaitingCallForModification(
+  state: SchedulerStateManager,
+  callId: string,
+  expectedApprovalGeneration?: number,
+): WaitingModificationTarget {
+  const currentCall = state.getToolCall(callId);
+  if (
+    !currentCall ||
+    currentCall.status !== CoreToolCallStatus.AwaitingApproval
+  ) {
+    throw new Error(
+      `Tool call ${callId} is no longer awaiting approval during modification`,
+    );
+  }
+
+  const approvalGeneration = currentCall.approvalGeneration;
+  if (approvalGeneration === undefined) {
+    throw new Error(`Tool call ${callId} has no approval generation`);
+  }
+  if (
+    expectedApprovalGeneration !== undefined &&
+    approvalGeneration !== expectedApprovalGeneration
+  ) {
+    throw new Error(
+      `Tool call ${callId} entered a new approval generation during modification`,
+    );
+  }
+
+  return { call: currentCall, approvalGeneration };
+}
+
 /**
  * Handles modification via an external editor (e.g. Vim).
  * Returns a result indicating success or failure with an error message.
@@ -235,6 +282,7 @@ async function handleExternalModification(
     getPreferredEditor: () => EditorType | undefined;
   },
   toolCall: ValidatingToolCall,
+  expectedApprovalGeneration: number,
   signal: AbortSignal,
 ): Promise<ExternalModificationResult> {
   const { state, modifier, getPreferredEditor } = deps;
@@ -247,19 +295,25 @@ async function handleExternalModification(
     return { error: NO_EDITOR_AVAILABLE_ERROR };
   }
 
+  const callId = toolCall.request.callId;
+  const target = getWaitingCallForModification(
+    state,
+    callId,
+    expectedApprovalGeneration,
+  );
   const result = await modifier.handleModifyWithEditor(
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    state.firstActiveCall as WaitingToolCall,
+    target.call,
     editor,
     signal,
   );
   if (result) {
-    const newInvocation = toolCall.tool.build(result.updatedParams);
-    state.updateArgs(
-      toolCall.request.callId,
-      result.updatedParams,
-      newInvocation,
+    const currentTarget = getWaitingCallForModification(
+      state,
+      callId,
+      target.approvalGeneration,
     );
+    const newInvocation = currentTarget.call.tool.build(result.updatedParams);
+    state.updateArgs(callId, result.updatedParams, newInvocation);
   }
   return {};
 }
@@ -271,22 +325,25 @@ async function handleInlineModification(
   deps: { state: SchedulerStateManager; modifier: ToolModificationHandler },
   toolCall: ValidatingToolCall,
   payload: ToolConfirmationPayload,
+  expectedApprovalGeneration: number,
   signal: AbortSignal,
 ): Promise<void> {
   const { state, modifier } = deps;
-  const result = await modifier.applyInlineModify(
-    // eslint-disable-next-line @typescript-eslint/no-unsafe-type-assertion
-    state.firstActiveCall as WaitingToolCall,
-    payload,
-    signal,
+  const callId = toolCall.request.callId;
+  const target = getWaitingCallForModification(
+    state,
+    callId,
+    expectedApprovalGeneration,
   );
+  const result = await modifier.applyInlineModify(target.call, payload, signal);
   if (result) {
-    const newInvocation = toolCall.tool.build(result.updatedParams);
-    state.updateArgs(
-      toolCall.request.callId,
-      result.updatedParams,
-      newInvocation,
+    const currentTarget = getWaitingCallForModification(
+      state,
+      callId,
+      target.approvalGeneration,
     );
+    const newInvocation = currentTarget.call.tool.build(result.updatedParams);
+    state.updateArgs(callId, result.updatedParams, newInvocation);
   }
 }
 
