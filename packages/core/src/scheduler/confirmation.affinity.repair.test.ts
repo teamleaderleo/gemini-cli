@@ -436,4 +436,68 @@ describe('confirmation modification call affinity repair', () => {
     expect(harness.modifier.handleModifyWithEditor).not.toHaveBeenCalled();
     expect(harness.state.updateArgs).not.toHaveBeenCalled();
   });
+
+  it('rejects an inline response when onConfirm replaces the approval generation', async () => {
+    const harnessRef: { current?: Harness } = {};
+    const onConfirm = vi.fn(async () => {
+      if (!harnessRef.current) throw new Error('missing test harness');
+      harnessRef.current.advanceTargetApprovalGeneration();
+    });
+    const harness = makeHarness([
+      {
+        type: 'info',
+        title: 'Target approval',
+        prompt: 'Approve target?',
+        onConfirm,
+      },
+    ]);
+    harnessRef.current = harness;
+
+    const resolution = resolve(harness);
+    await waitForConfirmationListener(harness);
+    emitResponse(harness, ToolConfirmationOutcome.ProceedOnce, {
+      newContent: 'stale inline response',
+    });
+
+    await expect(resolution).rejects.toThrow(
+      'Tool call call-b entered a new approval generation during modification',
+    );
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(harness.modifier.applyInlineModify).not.toHaveBeenCalled();
+    expect(harness.state.updateArgs).not.toHaveBeenCalled();
+  });
+
+  it('rejects an editor response when the generation changes during editor resolution', async () => {
+    let resolveEditor!: (editor: 'vim') => void;
+    const editorPromise = new Promise<'vim'>((resolve) => {
+      resolveEditor = resolve;
+    });
+    resolveEditorAsyncMock.mockReturnValueOnce(editorPromise);
+
+    const harness = makeHarness([
+      {
+        type: 'info',
+        title: 'Target approval',
+        prompt: 'Approve target?',
+        onConfirm: vi.fn(),
+      },
+      undefined,
+    ]);
+
+    const resolution = resolve(harness);
+    await waitForConfirmationListener(harness);
+    emitResponse(harness, ToolConfirmationOutcome.ModifyWithEditor);
+    await vi.waitFor(() => {
+      expect(resolveEditorAsyncMock).toHaveBeenCalledTimes(1);
+    });
+
+    harness.advanceTargetApprovalGeneration();
+    resolveEditor('vim');
+
+    await expect(resolution).rejects.toThrow(
+      'Tool call call-b entered a new approval generation during modification',
+    );
+    expect(harness.modifier.handleModifyWithEditor).not.toHaveBeenCalled();
+    expect(harness.state.updateArgs).not.toHaveBeenCalled();
+  });
 });

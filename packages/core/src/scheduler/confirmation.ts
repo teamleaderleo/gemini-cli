@@ -163,6 +163,10 @@ export async function resolveConfirmation(
       confirmationDetails: serializableDetails,
       correlationId,
     });
+    const approvalGeneration = getWaitingCallForModification(
+      state,
+      callId,
+    ).approvalGeneration;
 
     onWaitingForConfirmation?.(true);
     const response = await waitForConfirmation(
@@ -182,6 +186,7 @@ export async function resolveConfirmation(
       const modResult = await handleExternalModification(
         deps,
         toolCall,
+        approvalGeneration,
         signal,
       );
       // Editor is not available - emit error feedback and stay in the loop
@@ -190,7 +195,13 @@ export async function resolveConfirmation(
         coreEvents.emitFeedback('error', modResult.error);
       }
     } else if (response.payload && 'newContent' in response.payload) {
-      await handleInlineModification(deps, toolCall, response.payload, signal);
+      await handleInlineModification(
+        deps,
+        toolCall,
+        response.payload,
+        approvalGeneration,
+        signal,
+      );
       outcome = ToolConfirmationOutcome.ProceedOnce;
     }
   }
@@ -271,6 +282,7 @@ async function handleExternalModification(
     getPreferredEditor: () => EditorType | undefined;
   },
   toolCall: ValidatingToolCall,
+  expectedApprovalGeneration: number,
   signal: AbortSignal,
 ): Promise<ExternalModificationResult> {
   const { state, modifier, getPreferredEditor } = deps;
@@ -284,7 +296,11 @@ async function handleExternalModification(
   }
 
   const callId = toolCall.request.callId;
-  const target = getWaitingCallForModification(state, callId);
+  const target = getWaitingCallForModification(
+    state,
+    callId,
+    expectedApprovalGeneration,
+  );
   const result = await modifier.handleModifyWithEditor(
     target.call,
     editor,
@@ -309,11 +325,16 @@ async function handleInlineModification(
   deps: { state: SchedulerStateManager; modifier: ToolModificationHandler },
   toolCall: ValidatingToolCall,
   payload: ToolConfirmationPayload,
+  expectedApprovalGeneration: number,
   signal: AbortSignal,
 ): Promise<void> {
   const { state, modifier } = deps;
   const callId = toolCall.request.callId;
-  const target = getWaitingCallForModification(state, callId);
+  const target = getWaitingCallForModification(
+    state,
+    callId,
+    expectedApprovalGeneration,
+  );
   const result = await modifier.applyInlineModify(target.call, payload, signal);
   if (result) {
     const currentTarget = getWaitingCallForModification(
