@@ -18,11 +18,12 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-      - name: Preserve materializer and reset to exact source
+      - name: Preserve helpers and reset to exact source
         shell: bash
         run: |
           set -euo pipefail
           git show HEAD:.github/fieldwork/materialize-confirmation-precapture-repair.py > /tmp/materialize.py
+          git show HEAD:.github/fieldwork/fix-confirmation-precapture-test-lint.py > /tmp/fix-test-lint.py
           git reset --hard 3d6a91a2b3dceacf67886709aec95307cdc33a26
       - name: Use Node.js 20.19.0
         uses: actions/setup-node@v4
@@ -52,52 +53,9 @@ jobs:
           diff -u /tmp/expected-files /tmp/actual-files
           git diff --check "$SOURCE_BASE"..HEAD
       - name: Materialize pre-capture repair
-        shell: bash
         run: |
           python3 /tmp/materialize.py
-          python3 - <<'PY'
-          from pathlib import Path
-          path = Path('packages/core/src/scheduler/confirmation.affinity.repair.test.ts')
-          text = path.read_text()
-          old = """    let harness!: Harness;
-    const onConfirm = vi.fn(async () => {
-      harness.advanceTargetApprovalGeneration();
-    });
-    harness = makeHarness([
-"""
-          new = """    const harnessRef: { current?: Harness } = {};
-    const onConfirm = vi.fn(async () => {
-      if (!harnessRef.current) throw new Error('missing test harness');
-      harnessRef.current.advanceTargetApprovalGeneration();
-    });
-    const harness = makeHarness([
-"""
-          if text.count(old) != 1:
-              raise SystemExit(f'expected one mutable harness block, found {text.count(old)}')
-          text = text.replace(old, new, 1)
-          needle = """      },
-    ]);
-
-    const resolution = resolve(harness);
-    await waitForConfirmationListener(harness);
-    emitResponse(harness, ToolConfirmationOutcome.ProceedOnce, {
-      newContent: 'stale inline response',
-    });
-"""
-          replacement = """      },
-    ]);
-    harnessRef.current = harness;
-
-    const resolution = resolve(harness);
-    await waitForConfirmationListener(harness);
-    emitResponse(harness, ToolConfirmationOutcome.ProceedOnce, {
-      newContent: 'stale inline response',
-    });
-"""
-          if text.count(needle) != 1:
-              raise SystemExit(f'expected one inline response block, found {text.count(needle)}')
-          path.write_text(text.replace(needle, replacement, 1))
-          PY
+          python3 /tmp/fix-test-lint.py
       - name: Format and verify repair fence
         shell: bash
         run: |
