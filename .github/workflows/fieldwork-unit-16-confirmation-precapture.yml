@@ -1,0 +1,108 @@
+name: Fieldwork unit 16 confirmation pre-capture repair
+
+on:
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  focused:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Check out carrier head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+      - name: Preserve materializer and reset to exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git show HEAD:.github/fieldwork/materialize-confirmation-precapture-repair.py > /tmp/materialize.py
+          git reset --hard 3d6a91a2b3dceacf67886709aec95307cdc33a26
+      - name: Use Node.js 20.19.0
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.19.0
+          cache: npm
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Verify exact source and seven-file fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          SOURCE_BASE=f47d6c6f7a1308d81f9f57acf7d279f0928c5249
+          SOURCE_HEAD=3d6a91a2b3dceacf67886709aec95307cdc33a26
+          test "$(git rev-parse HEAD)" = "$SOURCE_HEAD"
+          git diff --name-only "$SOURCE_BASE"..HEAD | sort -u > /tmp/actual-files
+          cat > /tmp/expected-files <<'EOF'
+          packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+          packages/core/src/scheduler/confirmation.test.ts
+          packages/core/src/scheduler/confirmation.ts
+          packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts
+          packages/core/src/scheduler/state-manager.approval-generation.test.ts
+          packages/core/src/scheduler/state-manager.ts
+          packages/core/src/scheduler/types.ts
+          EOF
+          sort -u /tmp/expected-files -o /tmp/expected-files
+          diff -u /tmp/expected-files /tmp/actual-files
+          git diff --check "$SOURCE_BASE"..HEAD
+      - name: Materialize pre-capture repair
+        run: python3 /tmp/materialize.py
+      - name: Format and verify repair fence
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx prettier --write \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+          npx prettier --check \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+          npx eslint --max-warnings 0 \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts \
+            packages/core/src/scheduler/confirmation.test.ts \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/scheduler.confirmation-affinity.test.ts \
+            packages/core/src/scheduler/state-manager.approval-generation.test.ts \
+            packages/core/src/scheduler/state-manager.ts \
+            packages/core/src/scheduler/types.ts
+          mapfile -t changed < <(git diff --name-only | sort)
+          expected=(
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+            packages/core/src/scheduler/confirmation.ts
+          )
+          test "${changed[*]}" = "${expected[*]}"
+          git diff --check
+      - name: Run focused and adjacent scheduler tests
+        run: |
+          npm run test --workspace @google/gemini-cli-core -- \
+            src/scheduler/confirmation.affinity.repair.test.ts \
+            src/scheduler/confirmation.test.ts \
+            src/scheduler/scheduler.confirmation-affinity.test.ts \
+            src/scheduler/state-manager.approval-generation.test.ts \
+            src/scheduler/state-manager.test.ts
+      - name: Run core build and typecheck
+        run: |
+          npm run build --workspace @google/gemini-cli-core
+          npm run typecheck --workspace @google/gemini-cli-core
+      - name: Publish repaired exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Fieldwork Repair'
+          git config user.email 'fieldwork-repair@users.noreply.github.com'
+          git add \
+            packages/core/src/scheduler/confirmation.ts \
+            packages/core/src/scheduler/confirmation.affinity.repair.test.ts
+          git commit -m 'fix(core): capture approval generation before confirmation awaits'
+          git push \
+            --force-with-lease=refs/heads/fix/scheduler-confirmation-call-affinity:3d6a91a2b3dceacf67886709aec95307cdc33a26 \
+            origin HEAD:refs/heads/fix/scheduler-confirmation-call-affinity
